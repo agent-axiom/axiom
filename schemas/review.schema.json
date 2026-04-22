@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AXIOM Review Result",
+  "type": "object",
+  "required": ["outcome", "summary", "findings", "next_phase"],
+  "properties": {
+    "outcome": {
+      "enum": ["pass", "changes_requested", "blocked"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "title", "evidence"],
+        "properties": {
+          "severity": {
+            "enum": ["blocker", "high", "medium", "low"]
+          },
+          "title": {"type": "string"},
+          "file": {"type": "string"},
+          "line_start": {"type": "integer"},
+          "line_end": {"type": "integer"},
+          "evidence": {"type": "string"},
+          "required_fix": {"type": "string"}
+        }
+      }
+    },
+    "next_phase": {
+      "enum": ["execute", "plan", "design", "verify", "done"]
+    }
+  }
+}

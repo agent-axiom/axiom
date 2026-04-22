@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+if [ -n "${PYTHONPATH:-}" ]; then
+  export PYTHONPATH="$ROOT/src:$PYTHONPATH"
+else
+  export PYTHONPATH="$ROOT/src"
+fi
+
+exec python3 -m axiom.cli "$@"

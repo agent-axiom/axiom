@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "axiom-workflow"
+version = "0.1.0"
+description = "Deterministic local-first workflow layer for coding agents"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.scripts]
+axiom = "axiom.cli:entrypoint"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

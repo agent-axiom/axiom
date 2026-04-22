@@ -1,0 +1,9 @@
+.DS_Store
+.idea/
+.worktrees/
+.axiom-worktrees/
+.axiom/artifacts/local/
+.axiom/logs/
+.axiom/runtime/
+__pycache__/
+*.pyc

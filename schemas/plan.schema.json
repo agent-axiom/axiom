@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AXIOM Plan Result",
+  "type": "object",
+  "required": ["summary", "steps", "manual_smoke", "stop_conditions"],
+  "properties": {
+    "summary": {
+      "type": "string"
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "write_scope", "checks"],
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "write_scope": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "checks": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    },
+    "manual_smoke": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "instruction"],
+        "properties": {
+          "id": {"type": "string"},
+          "instruction": {"type": "string"}
+        }
+      }
+    },
+    "stop_conditions": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

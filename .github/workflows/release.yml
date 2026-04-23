@@ -1,0 +1,85 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build
+
+      - name: Write embedded build metadata
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          BUILD_TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          python scripts/write_build_metadata.py \
+            --output src/axiom/_build.py \
+            --version "$VERSION" \
+            --git-commit "${GITHUB_SHA}" \
+            --git-tag "${GITHUB_REF_NAME}" \
+            --build-timestamp "$BUILD_TIMESTAMP" \
+            --source-repo "https://github.com/${GITHUB_REPOSITORY}"
+
+      - name: Run unit suite
+        run: make test
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Generate SHA256 manifest
+        run: python scripts/release_manifest.py dist/* > dist/SHA256SUMS
+
+      - name: Generate SPDX SBOM
+        run: >
+          python scripts/sbom.py
+          --package-name axiom-workflow
+          --version "${GITHUB_REF_NAME#v}"
+          dist/*
+          > dist/SBOM.spdx.json
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/*
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${GITHUB_REF_NAME}"
+          dist/*
+          --title "${GITHUB_REF_NAME}"
+          --generate-notes
+
+      - name: Attest release artifacts
+        uses: actions/attest@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Attest SBOM
+        uses: actions/attest@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+          sbom-path: dist/SBOM.spdx.json

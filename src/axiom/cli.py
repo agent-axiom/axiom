@@ -7,6 +7,7 @@ from pathlib import Path
 from .git import diff_against_base
 from .phases import finish_task, run_design, run_execute, run_plan, run_review, run_verify
 from .task_file import create_task, list_task_paths, load_task, resolve_task_path
+from .version import build_metadata
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,6 +18,9 @@ def build_parser() -> argparse.ArgumentParser:
     make_parser = subparsers.add_parser("make", help="Create a new task file")
     make_parser.add_argument("title")
     make_parser.add_argument("--kind", default="feature")
+
+    version_parser = subparsers.add_parser("version", help="Show AXIOM version metadata")
+    version_parser.add_argument("--verbose", action="store_true")
 
     subparsers.add_parser("list", help="List tasks")
 
@@ -107,6 +111,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "make":
         task_path = create_task(repo_root=repo_root, title=args.title, kind=args.kind)
         print(task_path)
+        return 0
+
+    if args.command == "version":
+        metadata = build_metadata()
+        if args.verbose:
+            print("\n".join(metadata.verbose_lines()))
+        else:
+            print(metadata.version)
         return 0
 
     if args.command == "list":

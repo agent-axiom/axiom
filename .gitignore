@@ -7,3 +7,6 @@
 .axiom/runtime/
 __pycache__/
 *.pyc
+build/
+dist/
+*.egg-info/

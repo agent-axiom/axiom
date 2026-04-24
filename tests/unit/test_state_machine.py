@@ -33,3 +33,28 @@ class StateMachineTest(unittest.TestCase):
         )
         self.assertFalse(allowed)
         self.assertIn("docs", reason)
+
+    def test_finish_allows_execute_status_when_verify_and_review_are_disabled(self) -> None:
+        allowed, reason = can_transition(
+            current_status="execute.passed",
+            next_status="done",
+            verify_passed=True,
+            review_passed=True,
+            manual_smoke_complete=True,
+            docs_resolved=True,
+            verification_required=False,
+            review_required=False,
+        )
+        self.assertTrue(allowed, reason)
+
+    def test_finish_allows_verify_status_when_review_is_disabled(self) -> None:
+        allowed, reason = can_transition(
+            current_status="verify.passed",
+            next_status="done",
+            verify_passed=True,
+            review_passed=True,
+            manual_smoke_complete=True,
+            docs_resolved=True,
+            review_required=False,
+        )
+        self.assertTrue(allowed, reason)

@@ -21,3 +21,17 @@ class BootstrapCLITest(unittest.TestCase):
         self.assertEqual(namespace.command, "run")
         self.assertEqual(namespace.phase, "plan")
         self.assertEqual(namespace.task, "AX-1")
+
+    def test_run_plan_accepts_adapter_command(self) -> None:
+        parser = build_parser()
+        namespace = parser.parse_args(["run", "plan", "AX-1", "--adapter-command", "python3 adapter.py"])
+        self.assertEqual(namespace.adapter_command, "python3 adapter.py")
+
+    def test_policy_approve_keeps_top_level_command(self) -> None:
+        parser = build_parser()
+        namespace = parser.parse_args(
+            ["policy", "approve", "--command", "git push --dry-run", "--reason", "human approved"]
+        )
+        self.assertEqual(namespace.command, "policy")
+        self.assertEqual(namespace.policy_command, "approve")
+        self.assertEqual(namespace.policy_target_command, "git push --dry-run")

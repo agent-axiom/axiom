@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
+from .approvals import approve_command, list_approvals
 from .git import task_diff
 from .phases import finish_task, run_design, run_execute, run_plan, run_review, run_verify
 from .task_file import create_task, list_task_paths, load_task, resolve_task_path
@@ -21,6 +23,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     version_parser = subparsers.add_parser("version", help="Show AXIOM version metadata")
     version_parser.add_argument("--verbose", action="store_true")
+
+    adapter_parser = subparsers.add_parser("adapter", help="Inspect agent adapter support")
+    adapter_subparsers = adapter_parser.add_subparsers(dest="adapter_command", required=True)
+    adapter_subparsers.add_parser("list", help="List built-in adapter protocols")
+
+    policy_parser = subparsers.add_parser("policy", help="Manage local AXIOM policy approvals")
+    policy_subparsers = policy_parser.add_subparsers(dest="policy_command", required=True)
+    approve_parser = policy_subparsers.add_parser("approve", help="Persist approval for an escalated command")
+    approve_parser.add_argument("--command", dest="policy_target_command", required=True)
+    approve_parser.add_argument("--reason", required=True)
+    policy_subparsers.add_parser("approvals", help="List persisted approvals")
 
     subparsers.add_parser("list", help="List tasks")
 
@@ -41,10 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan_parser = run_subparsers.add_parser("plan")
     plan_parser.add_argument("task")
+    plan_parser.add_argument("--adapter-command")
 
     execute_parser = run_subparsers.add_parser("execute")
     execute_parser.add_argument("task")
     execute_parser.add_argument("--note", default="Execution recorded.")
+    execute_parser.add_argument("--adapter-command")
 
     verify_parser = run_subparsers.add_parser("verify")
     verify_parser.add_argument("task")
@@ -121,6 +136,20 @@ def main(argv: list[str] | None = None) -> int:
             print(metadata.version)
         return 0
 
+    if args.command == "adapter":
+        if args.adapter_command == "list":
+            print("command\taxiom.adapter.v1 JSON over stdin/stdout")
+            return 0
+
+    if args.command == "policy":
+        if args.policy_command == "approve":
+            approval_id = approve_command(repo_root, args.policy_target_command, reason=args.reason)
+            print(approval_id)
+            return 0
+        if args.policy_command == "approvals":
+            print(json.dumps(list_approvals(repo_root), indent=2, sort_keys=True))
+            return 0
+
     if args.command == "list":
         for task_path in list_task_paths(repo_root):
             task = load_task(task_path)
@@ -150,9 +179,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.phase == "design":
             artifact = run_design(task_path)
         elif args.phase == "plan":
-            artifact = run_plan(task_path)
+            artifact = run_plan(task_path, adapter_command=args.adapter_command)
         elif args.phase == "execute":
-            artifact = run_execute(task_path, note=args.note)
+            artifact = run_execute(task_path, note=args.note, adapter_command=args.adapter_command)
         elif args.phase == "verify":
             manual_smoke = _parse_manual_smoke(args.manual_smoke)
             artifact = run_verify(

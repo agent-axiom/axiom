@@ -8,12 +8,14 @@ AXIOM is not a prompt pack and not a giant autonomous IDE. The core idea is that
 
 This first slice includes:
 - one markdown task file per task under `.axiom/tasks/`
+- first-class git worktree provisioning for git repositories with an initial commit
 - structured JSON artifacts under `.axiom/artifacts/shared/`
-- a lifecycle CLI with `make`, `resume`, `list`, `show`, `diff`, `run <phase>`, `finish`, and `version`
+- a lifecycle CLI with `make`, `resume`, `list`, `show`, `diff`, `run <phase>`, `finish`, `adapter`, `policy`, and `version`
+- an explicit command-adapter protocol for local model shims and host coding agents
 - mandatory verification and review gates before completion
 - release metadata files and GitHub Actions workflows for transparent releases
 
-This slice is intentionally deterministic and stdlib-only. It defines the workflow seams for model adapters without requiring an LLM to run.
+This slice is intentionally deterministic and stdlib-only. It can run without an LLM, but it now has a real command-adapter seam for local models and host agents that speak JSON over stdin/stdout.
 
 ## What The Binary Actually Does
 
@@ -21,8 +23,10 @@ The `axiom` binary is a local workflow engine.
 
 It does not just route between prompt files. Its job is to enforce workflow discipline around an agent or model:
 - create and update one markdown task file per task
+- provision an isolated git worktree per task when the target repository supports it
 - enforce task status transitions
 - persist phase artifacts under `.axiom/artifacts/`
+- optionally call a local command adapter for planning and execution
 - gate completion on verify and review
 - keep work portable across different agent hosts
 
@@ -319,6 +323,9 @@ For local development, `bin/axiom` sets `PYTHONPATH=src` so the CLI works withou
 
 This repository now proves the load-bearing local workflow and release transparency pieces first:
 - task file lifecycle
+- real git worktree provisioning for repositories with an initial commit
+- task-scoped diff and changed-file tracking
+- command-adapter protocol for local model shims and host agents
 - persisted artifacts
 - verification and review gates
 - deterministic local CLI control
@@ -326,11 +333,23 @@ This repository now proves the load-bearing local workflow and release transpare
 - GitHub Releases and GitHub Actions based release verification assets
 
 It still does not ship:
-- real model adapters
-- real host-agent adapters
-- real worktree provisioning inside AXIOM itself
+- vendor-specific model adapters
+- a built-in autonomous code-editing agent
+- native local model server integrations
 - reproducible builds
 - native macOS signing or notarization
+
+The current adapter support is deliberately narrow: AXIOM can invoke an explicit local command adapter for `run plan` and `run execute`, passing a structured JSON request on stdin and reading JSON from stdout. This is enough to integrate a local model shim or a host-agent wrapper without making AXIOM depend on a single provider.
+
+Example:
+
+```bash
+bin/axiom --repo-root "$(pwd)" run plan "$TASK_ID" \
+  --adapter-command "python3 /opt/axiom-adapters/local_planner.py"
+
+bin/axiom --repo-root "$(pwd)" run execute "$TASK_ID" \
+  --adapter-command "python3 /opt/axiom-adapters/local_executor.py"
+```
 
 ## Repository Layout
 

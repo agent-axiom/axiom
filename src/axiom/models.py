@@ -93,6 +93,7 @@ class CommandReceipt:
     stderr: str = ""
     policy: str = "allow"
     policy_reason: str = ""
+    approval_id: str = ""
 
 
 @dataclass

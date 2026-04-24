@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .adapters import build_adapter_request, invoke_command_adapter
 from .artifacts import latest_phase_result, write_phase_result
 from .git import is_git_repo, task_changed_files, task_diff, task_workspace
 from .models import FinishDecision
@@ -109,6 +110,80 @@ def _detect_checks(repo_root: Path) -> list[str]:
     return []
 
 
+def _plan_write_scope(plan_result: dict[str, object]) -> list[str]:
+    scope: set[str] = set()
+    for step in plan_result.get("steps", []):
+        if not isinstance(step, dict):
+            continue
+        for item in step.get("write_scope", []):
+            if isinstance(item, str) and item:
+                scope.add(item)
+    return sorted(scope)
+
+
+def _is_file_in_scope(file_name: str, write_scope: list[str]) -> bool:
+    if not write_scope:
+        return True
+    for scope in write_scope:
+        normalized = scope.rstrip("/")
+        if file_name == normalized or file_name.startswith(f"{normalized}/"):
+            return True
+    return False
+
+
+def _deterministic_plan_payload(task_title: str, scope: str, anchors: list[str], checks: list[str]) -> dict[str, object]:
+    steps: list[dict[str, object]] = []
+    if anchors:
+        for index, anchor in enumerate(anchors, start=1):
+            if anchor.startswith("test") or "/test" in anchor:
+                title = f"Update verification coverage in {anchor}."
+            elif anchor.lower().endswith((".md", ".rst")):
+                title = f"Update documentation in {anchor}."
+            else:
+                title = f"Apply the task change in {anchor}."
+            steps.append({"id": f"step-{index}", "title": title, "write_scope": [anchor], "checks": checks})
+    else:
+        steps.append(
+            {
+                "id": "step-1",
+                "title": "Discover concrete repo anchors and write them back to the task file before editing.",
+                "write_scope": [],
+                "checks": checks,
+            }
+        )
+    steps.append(
+        {
+            "id": f"step-{len(steps) + 1}",
+            "title": "Record task-scoped execution evidence from the task worktree.",
+            "write_scope": anchors,
+            "checks": [],
+        }
+    )
+    steps.append(
+        {
+            "id": f"step-{len(steps) + 1}",
+            "title": "Run automated checks, manual smoke, and process-isolated review.",
+            "write_scope": [],
+            "checks": checks,
+        }
+    )
+    return {
+        "summary": f"Plan ready for {task_title}: {scope or 'scope must stay within the task file.'}",
+        "steps": steps,
+        "manual_smoke": [
+            {
+                "id": "smoke-1",
+                "instruction": "Exercise the changed behavior manually from the task worktree and record the observed output.",
+            }
+        ],
+        "stop_conditions": [
+            "Stop if the write scope is empty or the task requires files outside declared anchors.",
+            "Stop if the task requires dependency changes.",
+            "Stop if the task needs work outside the repository root.",
+        ],
+    }
+
+
 def run_design(task_path: Path) -> Path:
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
@@ -136,7 +211,7 @@ def run_design(task_path: Path) -> Path:
     return artifact_path
 
 
-def run_plan(task_path: Path) -> Path:
+def run_plan(task_path: Path, *, adapter_command: str | None = None) -> Path:
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
     anchors = _anchor_paths(task.sections.get("Repo Anchors", ""))
@@ -144,39 +219,15 @@ def run_plan(task_path: Path) -> Path:
     check_root = workspace if workspace.exists() else repo_root
     checks = _detect_checks(check_root)
     scope = task.sections.get("Scope", "").strip()
-    first_title = "Apply scoped changes within declared repo anchors."
-    if not anchors:
-        first_title = "Discover and record concrete repo anchors before editing."
 
-    payload = {
-        "summary": f"Plan ready for {task.metadata.title}: {scope or 'scope must stay within the task file.'}",
-        "steps": [
-            {"id": "step-1", "title": first_title, "write_scope": anchors, "checks": checks},
-            {
-                "id": "step-2",
-                "title": "Record task-scoped execution evidence from the task worktree.",
-                "write_scope": anchors,
-                "checks": [],
-            },
-            {
-                "id": "step-3",
-                "title": "Run automated checks, manual smoke, and process-isolated review.",
-                "write_scope": [],
-                "checks": checks,
-            },
-        ],
-        "manual_smoke": [
-            {
-                "id": "smoke-1",
-                "instruction": "Exercise the changed behavior manually from the task worktree and record the observed output.",
-            }
-        ],
-        "stop_conditions": [
-            "Stop if the write scope is empty or the task requires files outside declared anchors.",
-            "Stop if the task requires dependency changes.",
-            "Stop if the task needs work outside the repository root.",
-        ],
-    }
+    if adapter_command:
+        request = build_adapter_request(phase="plan", task=task, task_path=task_path)
+        adapter_result = invoke_command_adapter(command=adapter_command, request=request, cwd=workspace)
+        payload = adapter_result.payload
+        payload["adapter"] = adapter_result.receipt
+    else:
+        payload = _deterministic_plan_payload(task.metadata.title, scope, anchors, checks)
+
     artifact_path = _write_validated_phase_result(
         repo_root=repo_root, task_id=task.metadata.id, phase="plan", payload=payload
     )
@@ -188,13 +239,38 @@ def run_plan(task_path: Path) -> Path:
     return artifact_path
 
 
-def run_execute(task_path: Path, *, note: str = "Execution recorded.") -> Path:
+def run_execute(
+    task_path: Path,
+    *,
+    note: str = "Execution recorded.",
+    adapter_command: str | None = None,
+) -> Path:
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
+    workspace = task_workspace(task)
+    pre_changed_files = task_changed_files(task)
+    adapter_receipt: dict[str, object] | None = None
+    summary = note
+    if adapter_command:
+        request = build_adapter_request(
+            phase="execute",
+            task=task,
+            task_path=task_path,
+            latest_artifacts={"plan": latest_phase_result(repo_root, task.metadata.id, "plan")},
+            diff=task_diff(task),
+        )
+        adapter_result = invoke_command_adapter(command=adapter_command, request=request, cwd=workspace)
+        adapter_receipt = adapter_result.receipt
+        summary = str(adapter_result.payload.get("summary") or note)
+    changed_files = task_changed_files(task)
     payload = {
-        "summary": note,
-        "changed_files": task_changed_files(task),
+        "summary": summary,
+        "changed_files": changed_files,
+        "pre_changed_files": pre_changed_files,
+        "new_changed_files": sorted(set(changed_files) - set(pre_changed_files)),
     }
+    if adapter_receipt is not None:
+        payload["adapter"] = adapter_receipt
     artifact_path = _write_validated_phase_result(
         repo_root=repo_root, task_id=task.metadata.id, phase="execute", payload=payload
     )
@@ -217,8 +293,8 @@ def run_verify(
     repo_root = repo_root_for(task_path)
     workspace = task_workspace(task)
 
-    automated_checks = [run_command(command, workspace).__dict__ for command in commands]
-    negative_checks = [run_command(command, workspace).__dict__ for command in negative_commands]
+    automated_checks = [run_command(command, workspace, repo_root=repo_root).__dict__ for command in commands]
+    negative_checks = [run_command(command, workspace, repo_root=repo_root).__dict__ for command in negative_commands]
     all_checks = automated_checks + negative_checks
     manual_smoke_complete = bool(manual_smoke) or not task.metadata.manual_smoke_required
     manual_smoke_passed = all(item["status"] in {"passed", "waived"} for item in manual_smoke)
@@ -343,6 +419,8 @@ def run_review(task_path: Path) -> Path:
     workspace = task_workspace(task)
     changed_files = task_changed_files(task)
     diff_text = task_diff(task)
+    plan_result = latest_phase_result(repo_root, task.metadata.id, "plan")
+    plan_write_scope = _plan_write_scope(plan_result)
     if is_git_repo(workspace):
         if not changed_files or diff_text == "No task-scoped diff.":
             findings.append(
@@ -353,6 +431,17 @@ def run_review(task_path: Path) -> Path:
                     "required_fix": "Apply the task changes in the task worktree or explain why this is an evidence-only task.",
                 }
             )
+        for file_name in changed_files:
+            if not _is_file_in_scope(file_name, plan_write_scope):
+                findings.append(
+                    {
+                        "severity": "high",
+                        "title": "Changed file outside plan write scope.",
+                        "file": file_name,
+                        "evidence": f"{file_name} is changed but is not covered by the latest plan write_scope.",
+                        "required_fix": "Update the plan write_scope or move the edit back inside the declared task scope.",
+                    }
+                )
         findings.extend(_diff_findings(diff_text))
 
     if findings:
@@ -362,6 +451,7 @@ def run_review(task_path: Path) -> Path:
             "findings": findings,
             "next_phase": "execute",
             "changed_files": changed_files,
+            "plan_write_scope": plan_write_scope,
         }
         status = "review.changes_requested"
         blocked_reason = payload["summary"]
@@ -372,6 +462,7 @@ def run_review(task_path: Path) -> Path:
             "findings": [],
             "next_phase": "done",
             "changed_files": changed_files,
+            "plan_write_scope": plan_write_scope,
         }
         status = "review.passed"
         blocked_reason = ""
@@ -399,14 +490,23 @@ def finish_task(task_path: Path) -> FinishDecision:
     )
     if not task.metadata.manual_smoke_required:
         manual_smoke_complete = True
+    verify_passed = verify_result.get("outcome") == "passed"
+    review_passed = review_result.get("outcome") == "pass"
+    if not task.metadata.verification_required:
+        verify_passed = True
+        manual_smoke_complete = True
+    if not task.metadata.review_required:
+        review_passed = True
 
     allowed, reason = can_transition(
         current_status=task.metadata.status,
         next_status="done",
-        verify_passed=verify_result.get("outcome") == "passed",
-        review_passed=review_result.get("outcome") == "pass",
+        verify_passed=verify_passed,
+        review_passed=review_passed,
         manual_smoke_complete=manual_smoke_complete,
         docs_resolved=task.metadata.docs_resolved(),
+        verification_required=task.metadata.verification_required,
+        review_required=task.metadata.review_required,
     )
 
     payload = {

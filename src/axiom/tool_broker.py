@@ -6,9 +6,10 @@ from pathlib import Path
 
 from .models import CommandReceipt
 from .policy import evaluate_command
+from .approvals import find_approval
 
 
-def run_command(command: str, cwd: Path) -> CommandReceipt:
+def run_command(command: str, cwd: Path, *, repo_root: Path | None = None) -> CommandReceipt:
     decision = evaluate_command(command)
     try:
         argv = shlex.split(command)
@@ -16,7 +17,13 @@ def run_command(command: str, cwd: Path) -> CommandReceipt:
         argv = []
 
     name = argv[0] if argv else "command"
-    if decision.action != "allow":
+    approval_id = ""
+    if decision.action == "escalate" and repo_root is not None:
+        approval = find_approval(repo_root, command)
+        if approval is not None:
+            approval_id = str(approval["id"])
+
+    if decision.action != "allow" and not approval_id:
         return CommandReceipt(
             name=name,
             command=command,
@@ -26,6 +33,7 @@ def run_command(command: str, cwd: Path) -> CommandReceipt:
             stderr=decision.reason,
             policy=decision.action,
             policy_reason=decision.reason,
+            approval_id="",
         )
 
     try:
@@ -40,6 +48,7 @@ def run_command(command: str, cwd: Path) -> CommandReceipt:
             stderr=str(exc),
             policy=decision.action,
             policy_reason=decision.reason,
+            approval_id=approval_id,
         )
 
     return CommandReceipt(
@@ -51,4 +60,5 @@ def run_command(command: str, cwd: Path) -> CommandReceipt:
         stderr=completed.stderr.strip(),
         policy=decision.action,
         policy_reason=decision.reason,
+        approval_id=approval_id,
     )

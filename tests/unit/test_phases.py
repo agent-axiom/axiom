@@ -99,10 +99,11 @@ class LifecycleFlowTest(unittest.TestCase):
             task = load_task(task_path)
             result = latest_phase_result(repo_root, task.metadata.id, "plan")
 
-        first_step = result["steps"][0]
-        self.assertIn("src/axiom/phases.py", first_step["write_scope"])
-        self.assertIn("tests/unit/test_phases.py", first_step["write_scope"])
-        self.assertIn("make test", first_step["checks"])
+        write_scope = {item for step in result["steps"] for item in step["write_scope"]}
+        checks = {item for step in result["steps"] for item in step["checks"]}
+        self.assertIn("src/axiom/phases.py", write_scope)
+        self.assertIn("tests/unit/test_phases.py", write_scope)
+        self.assertIn("make test", checks)
 
     def test_review_requests_changes_when_verified_git_task_has_no_diff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -175,3 +176,99 @@ class LifecycleFlowTest(unittest.TestCase):
         self.assertEqual(task.metadata.status, "review.passed")
         self.assertEqual(result["outcome"], "pass")
         self.assertEqual(result["changed_files"], ["app.py"])
+
+    def test_review_requests_changes_when_actual_diff_escapes_plan_write_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            (repo_root / "README.md").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Review scope",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            update_task(
+                task_path,
+                section_updates={
+                    "Repo Anchors": "- app.py",
+                    "Docs Impact": "No documentation changes required.",
+                },
+                metadata_updates={"docs_status": "not_needed"},
+            )
+            run_plan(task_path)
+            task = load_task(task_path)
+            Path(task.metadata.worktree, "README.md").write_text("changed outside scope\n", encoding="utf-8")
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('ok')\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "ok"}],
+            )
+
+            run_review(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(result["outcome"], "changes_requested")
+        self.assertTrue(any(finding["title"] == "Changed file outside plan write scope." for finding in result["findings"]))
+        self.assertEqual(result["plan_write_scope"], ["app.py"])
+
+    def test_finish_respects_disabled_verification_and_review_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Optional gates",
+                kind="chore",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            update_task(
+                task_path,
+                status="execute.passed",
+                section_updates={"Docs Impact": "No documentation changes required."},
+                metadata_updates={
+                    "verification_required": False,
+                    "review_required": False,
+                    "manual_smoke_required": False,
+                    "docs_status": "not_needed",
+                },
+            )
+
+            decision = finish_task(task_path)
+            task = load_task(task_path)
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(task.metadata.status, "done")
+
+    def test_finish_can_skip_review_when_review_required_is_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="No review gate",
+                kind="chore",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            run_execute(task_path)
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('ok')\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "ok"}],
+            )
+            update_task(
+                task_path,
+                section_updates={"Docs Impact": "No documentation changes required."},
+                metadata_updates={"review_required": False, "docs_status": "not_needed"},
+            )
+
+            decision = finish_task(task_path)
+            task = load_task(task_path)
+
+        self.assertTrue(decision.allowed)
+        self.assertEqual(task.metadata.status, "done")

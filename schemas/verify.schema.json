@@ -51,7 +51,8 @@
         "stdout": {"type": "string"},
         "stderr": {"type": "string"},
         "policy": {"enum": ["allow", "deny", "escalate"]},
-        "policy_reason": {"type": "string"}
+        "policy_reason": {"type": "string"},
+        "approval_id": {"type": "string"}
       }
     }
   }

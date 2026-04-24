@@ -42,14 +42,16 @@
   "$defs": {
     "commandReceipt": {
       "type": "object",
-      "required": ["name", "command", "status", "exit_code", "stdout", "stderr"],
+      "required": ["name", "command", "status", "exit_code", "stdout", "stderr", "policy"],
       "properties": {
         "name": {"type": "string"},
         "command": {"type": "string"},
-        "status": {"enum": ["passed", "failed"]},
+        "status": {"enum": ["passed", "failed", "blocked"]},
         "exit_code": {"type": "integer"},
         "stdout": {"type": "string"},
-        "stderr": {"type": "string"}
+        "stderr": {"type": "string"},
+        "policy": {"enum": ["allow", "deny", "escalate"]},
+        "policy_reason": {"type": "string"}
       }
     }
   }

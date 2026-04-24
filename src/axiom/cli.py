@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .git import diff_against_base
+from .git import task_diff
 from .phases import finish_task, run_design, run_execute, run_plan, run_review, run_verify
 from .task_file import create_task, list_task_paths, load_task, resolve_task_path
 from .version import build_metadata
@@ -82,7 +82,7 @@ def _next_step_for(status: str) -> str:
         return "run execute"
     if status == "execute.passed":
         return "run verify"
-    if status in {"verify.failed", "review.changes_requested"}:
+    if status in {"verify.failed", "verify.blocked", "review.changes_requested"}:
         return "run execute"
     if status == "verify.passed":
         return "run review"
@@ -140,8 +140,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "diff":
-        resolve_task_path(repo_root, args.task)
-        print(diff_against_base(repo_root))
+        task_path = resolve_task_path(repo_root, args.task)
+        task = load_task(task_path)
+        print(task_diff(task))
         return 0
 
     if args.command == "run":

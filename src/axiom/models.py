@@ -91,6 +91,8 @@ class CommandReceipt:
     exit_code: int
     stdout: str = ""
     stderr: str = ""
+    policy: str = "allow"
+    policy_reason: str = ""
 
 
 @dataclass

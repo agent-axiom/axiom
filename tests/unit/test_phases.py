@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from axiom.artifacts import latest_phase_result
 from axiom.phases import finish_task, run_design, run_execute, run_plan, run_review, run_verify
-from axiom.task_file import create_task, load_task
+from axiom.task_file import create_task, load_task, update_task
 
 
 class LifecycleFlowTest(unittest.TestCase):
@@ -36,6 +37,11 @@ class LifecycleFlowTest(unittest.TestCase):
                 commands=[f"{sys.executable} -c \"print('ok')\""],
                 negative_commands=[f"{sys.executable} -c \"print('still-ok')\""],
                 manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "CLI output looked correct"}],
+            )
+            update_task(
+                task_path,
+                section_updates={"Docs Impact": "No documentation changes required."},
+                metadata_updates={"docs_status": "not_needed"},
             )
             run_review(task_path)
             allowed = finish_task(task_path)
@@ -68,3 +74,104 @@ class LifecycleFlowTest(unittest.TestCase):
         self.assertEqual(task.metadata.status, "verify.passed")
         self.assertEqual(verify_result["outcome"], "passed")
         self.assertEqual(verify_result["automated_checks"][0]["status"], "passed")
+
+    def test_plan_uses_repo_anchors_and_detected_make_test_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            (repo_root / "Makefile").write_text("test:\n\tpython3 -m unittest\n", encoding="utf-8")
+            (repo_root / "src").mkdir()
+            (repo_root / "tests").mkdir()
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Operational plan",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            update_task(
+                task_path,
+                section_updates={
+                    "Repo Anchors": "- src/axiom/phases.py\n- tests/unit/test_phases.py",
+                    "Scope": "Only change the phase runtime.",
+                },
+            )
+
+            run_plan(task_path)
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "plan")
+
+        first_step = result["steps"][0]
+        self.assertIn("src/axiom/phases.py", first_step["write_scope"])
+        self.assertIn("tests/unit/test_phases.py", first_step["write_scope"])
+        self.assertIn("make test", first_step["checks"])
+
+    def test_review_requests_changes_when_verified_git_task_has_no_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Review no diff",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            update_task(
+                task_path,
+                section_updates={"Docs Impact": "No documentation changes required."},
+                metadata_updates={"docs_status": "not_needed"},
+            )
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('ok')\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "ok"}],
+            )
+
+            run_review(task_path)
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(task.metadata.status, "review.changes_requested")
+        self.assertEqual(result["outcome"], "changes_requested")
+        self.assertTrue(any(finding["title"] == "No task-scoped diff found." for finding in result["findings"]))
+
+    def test_review_passes_when_verified_git_task_has_diff_and_docs_disposition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Review with diff",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            task = load_task(task_path)
+            Path(task.metadata.worktree, "app.py").write_text("print('changed')\n", encoding="utf-8")
+            update_task(
+                task_path,
+                section_updates={"Docs Impact": "No documentation changes required."},
+                metadata_updates={"docs_status": "not_needed"},
+            )
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('ok')\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "ok"}],
+            )
+
+            run_review(task_path)
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(task.metadata.status, "review.passed")
+        self.assertEqual(result["outcome"], "pass")
+        self.assertEqual(result["changed_files"], ["app.py"])

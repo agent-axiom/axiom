@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import layout_for
-from .git import plan_workspace
+from .git import provision_workspace
 from .models import TaskDocument, TaskMetadata
 from .templates import FRONTMATTER_ORDER, REQUIRED_SECTIONS, render_new_task
 
@@ -165,7 +165,7 @@ def create_task(
     sequence = _next_task_sequence(repo_root, day_stamp)
     task_id = f"AX-{day_stamp}-{sequence:03d}"
     slug = slugify(title)
-    workspace = plan_workspace(repo_root, task_id, slug)
+    workspace = provision_workspace(repo_root, task_id, slug)
     task_dir = layout.tasks_root / current_time.strftime("%Y") / current_time.strftime("%m")
     task_path = task_dir / f"{task_id}-{slug}.md"
     document = render_new_task(

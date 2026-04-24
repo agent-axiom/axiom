@@ -319,6 +319,26 @@ bin/axiom version --verbose
 
 For local development, `bin/axiom` sets `PYTHONPATH=src` so the CLI works without installing the package first.
 
+## Adapter And Policy Notes
+
+Adapter protocol:
+- Spec: [docs/ADAPTER_PROTOCOL.md](docs/ADAPTER_PROTOCOL.md)
+- Reference plan adapter: `examples/adapters/static_plan_adapter.py`
+- Reference execute adapter: `examples/adapters/file_write_execute_adapter.py`
+
+Policy approvals are explicit and local. Escalated commands are blocked until approved:
+
+```bash
+bin/axiom --repo-root "$(pwd)" policy approve \
+  --task "$TASK_ID" \
+  --command "git push --dry-run" \
+  --reason "human reviewed this dry-run push"
+
+bin/axiom --repo-root "$(pwd)" policy approvals
+```
+
+Review is contract-aware for git tasks. The latest plan write scope is compared against the task-scoped changed files, and the review artifact records `planned_scope`, `actual_scope`, and `scope_mismatches`.
+
 ## Current Bootstrap Limitation
 
 This repository now proves the load-bearing local workflow and release transparency pieces first:
@@ -357,5 +377,6 @@ bin/axiom --repo-root "$(pwd)" run execute "$TASK_ID" \
 - `.axiom/tasks/`: markdown task files
 - `.axiom/artifacts/shared/`: persisted phase outputs
 - `scripts/`: release metadata generation helpers
+- `examples/adapters/`: minimal command adapters for protocol testing
 - `.github/workflows/`: test and release workflows
 - `tests/unit/`: bootstrap verification suite

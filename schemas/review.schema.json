@@ -30,6 +30,33 @@
     },
     "next_phase": {
       "enum": ["execute", "plan", "design", "verify", "done"]
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "plan_write_scope": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "planned_scope": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "actual_scope": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "scope_mismatches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "reason"],
+        "properties": {
+          "file": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
     }
   }
 }

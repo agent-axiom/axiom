@@ -30,8 +30,18 @@ class BootstrapCLITest(unittest.TestCase):
     def test_policy_approve_keeps_top_level_command(self) -> None:
         parser = build_parser()
         namespace = parser.parse_args(
-            ["policy", "approve", "--command", "git push --dry-run", "--reason", "human approved"]
+            [
+                "policy",
+                "approve",
+                "--command",
+                "git push --dry-run",
+                "--reason",
+                "human approved",
+                "--task",
+                "AX-1",
+            ]
         )
         self.assertEqual(namespace.command, "policy")
         self.assertEqual(namespace.policy_command, "approve")
         self.assertEqual(namespace.policy_target_command, "git push --dry-run")
+        self.assertEqual(namespace.task, "AX-1")

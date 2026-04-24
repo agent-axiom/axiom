@@ -33,6 +33,20 @@ def _init_repo(repo_root: Path) -> None:
 
 
 class AdapterTest(unittest.TestCase):
+    def test_adapter_protocol_spec_and_reference_adapters_are_present(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        spec_path = repo_root / "docs" / "ADAPTER_PROTOCOL.md"
+        request_schema_path = repo_root / "schemas" / "adapter-request.schema.json"
+        static_plan = repo_root / "examples" / "adapters" / "static_plan_adapter.py"
+        file_writer = repo_root / "examples" / "adapters" / "file_write_execute_adapter.py"
+
+        request_schema = json.loads(request_schema_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(spec_path.exists())
+        self.assertEqual(request_schema["properties"]["protocol"]["const"], "axiom.adapter.v1")
+        self.assertTrue(static_plan.exists())
+        self.assertTrue(file_writer.exists())
+
     def test_build_adapter_request_includes_task_workspace_and_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)

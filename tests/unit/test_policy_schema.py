@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -69,13 +70,33 @@ class PolicySchemaTest(unittest.TestCase):
     def test_verify_runs_escalated_command_after_persisted_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
             task_path = create_task(
                 repo_root=repo_root,
                 title="Approved escalation",
                 kind="feature",
                 now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
             )
-            approval_id = approve_command(repo_root, "git push --dry-run", reason="test approval")
+            task = load_task(task_path)
+            run_verify(
+                task_path,
+                commands=["git push --dry-run"],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "policy smoke"}],
+            )
+            blocked = latest_phase_result(repo_root, task.metadata.id, "verify")
+            approval_id = approve_command(
+                repo_root,
+                "git push --dry-run",
+                reason="test approval",
+                task_id=task.metadata.id,
+                worktree=task.metadata.worktree,
+            )
             run_verify(
                 task_path,
                 commands=["git push --dry-run"],
@@ -85,8 +106,20 @@ class PolicySchemaTest(unittest.TestCase):
             task = load_task(task_path)
             result = latest_phase_result(repo_root, task.metadata.id, "verify")
 
+        self.assertEqual(blocked["outcome"], "blocked")
+        self.assertEqual(blocked["automated_checks"][0]["exit_code"], -1)
         receipt = result["automated_checks"][0]
         self.assertEqual(receipt["status"], "failed")
         self.assertEqual(receipt["policy"], "escalate")
         self.assertEqual(receipt["approval_id"], approval_id)
+        self.assertEqual(receipt["approval_reason"], "test approval")
+        self.assertEqual(
+            receipt["approval_scope"],
+            {
+                "repo_root": str(repo_root.resolve()),
+                "task_id": task.metadata.id,
+                "worktree": task.metadata.worktree,
+            },
+        )
+        self.assertNotEqual(receipt["exit_code"], -1)
         self.assertNotEqual(result["outcome"], "blocked")

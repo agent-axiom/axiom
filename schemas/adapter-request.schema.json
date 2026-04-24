@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AXIOM Adapter Request",
+  "type": "object",
+  "required": [
+    "protocol",
+    "phase",
+    "task",
+    "task_path",
+    "repo_root",
+    "workspace",
+    "base_branch",
+    "branch",
+    "sections",
+    "latest_artifacts",
+    "diff"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "axiom.adapter.v1"
+    },
+    "phase": {
+      "enum": ["plan", "execute", "review"]
+    },
+    "task": {
+      "type": "object",
+      "required": ["id", "title", "kind", "status", "risk"],
+      "properties": {
+        "id": {"type": "string"},
+        "title": {"type": "string"},
+        "kind": {"type": "string"},
+        "status": {"type": "string"},
+        "risk": {"type": "string"}
+      }
+    },
+    "task_path": {"type": "string"},
+    "repo_root": {"type": "string"},
+    "workspace": {"type": "string"},
+    "base_branch": {"type": "string"},
+    "branch": {"type": "string"},
+    "sections": {"type": "object"},
+    "latest_artifacts": {"type": "object"},
+    "diff": {"type": "string"}
+  }
+}

@@ -155,13 +155,17 @@ class LifecycleFlowTest(unittest.TestCase):
                 kind="feature",
                 now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
             )
-            task = load_task(task_path)
-            Path(task.metadata.worktree, "app.py").write_text("print('changed')\n", encoding="utf-8")
             update_task(
                 task_path,
-                section_updates={"Docs Impact": "No documentation changes required."},
+                section_updates={
+                    "Repo Anchors": "- app.py",
+                    "Docs Impact": "No documentation changes required.",
+                },
                 metadata_updates={"docs_status": "not_needed"},
             )
+            run_plan(task_path)
+            task = load_task(task_path)
+            Path(task.metadata.worktree, "app.py").write_text("print('changed')\n", encoding="utf-8")
             run_verify(
                 task_path,
                 commands=[f"{sys.executable} -c \"print('ok')\""],
@@ -176,6 +180,9 @@ class LifecycleFlowTest(unittest.TestCase):
         self.assertEqual(task.metadata.status, "review.passed")
         self.assertEqual(result["outcome"], "pass")
         self.assertEqual(result["changed_files"], ["app.py"])
+        self.assertEqual(result["planned_scope"], ["app.py"])
+        self.assertEqual(result["actual_scope"], ["app.py"])
+        self.assertEqual(result["scope_mismatches"], [])
 
     def test_review_requests_changes_when_actual_diff_escapes_plan_write_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -216,7 +223,52 @@ class LifecycleFlowTest(unittest.TestCase):
 
         self.assertEqual(result["outcome"], "changes_requested")
         self.assertTrue(any(finding["title"] == "Changed file outside plan write scope." for finding in result["findings"]))
-        self.assertEqual(result["plan_write_scope"], ["app.py"])
+        self.assertEqual(result["planned_scope"], ["app.py"])
+        self.assertEqual(result["actual_scope"], ["README.md"])
+        self.assertEqual(
+            result["scope_mismatches"],
+            [{"file": "README.md", "reason": "outside planned write scope"}],
+        )
+
+    def test_review_requests_changes_when_git_task_has_diff_but_no_plan_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Review missing plan",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            task = load_task(task_path)
+            Path(task.metadata.worktree, "app.py").write_text("print('changed')\n", encoding="utf-8")
+            update_task(
+                task_path,
+                section_updates={"Docs Impact": "No documentation changes required."},
+                metadata_updates={"docs_status": "not_needed"},
+            )
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('ok')\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "ok"}],
+            )
+
+            run_review(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(result["outcome"], "changes_requested")
+        self.assertEqual(result["planned_scope"], [])
+        self.assertEqual(result["actual_scope"], ["app.py"])
+        self.assertEqual(
+            result["scope_mismatches"],
+            [{"file": "app.py", "reason": "missing planned write scope"}],
+        )
 
     def test_finish_respects_disabled_verification_and_review_flags(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

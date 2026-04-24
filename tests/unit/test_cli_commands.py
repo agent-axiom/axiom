@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -10,6 +11,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from axiom.cli import main
+from axiom.artifacts import latest_phase_result
+from axiom.task_file import load_task, update_task
+
+
+def _run_cli(argv: list[str]) -> int:
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        return main(argv)
 
 
 class CommandIntegrationTest(unittest.TestCase):
@@ -31,3 +40,85 @@ class CommandIntegrationTest(unittest.TestCase):
 
         self.assertEqual(show_code, 0)
         self.assertIn("Bootstrap task", show_stdout.getvalue())
+
+    def test_full_cli_lifecycle_with_adapter_plan_and_execute(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+            project_root = Path(__file__).resolve().parents[2]
+            plan_adapter = project_root / "examples" / "adapters" / "static_plan_adapter.py"
+            execute_adapter = project_root / "examples" / "adapters" / "file_write_execute_adapter.py"
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(main(["--repo-root", str(repo_root), "make", "Adapter e2e"]), 0)
+            task_path = Path(stdout.getvalue().strip())
+
+            self.assertEqual(_run_cli(["--repo-root", str(repo_root), "run", "design", str(task_path)]), 0)
+            update_task(
+                task_path,
+                section_updates={
+                    "Repo Anchors": "- app.py",
+                    "Docs Impact": "No documentation changes required.",
+                },
+                metadata_updates={"docs_status": "not_needed"},
+            )
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "plan",
+                        str(task_path),
+                        "--adapter-command",
+                        f"{sys.executable} {plan_adapter}",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "execute",
+                        str(task_path),
+                        "--adapter-command",
+                        f"{sys.executable} {execute_adapter}",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "verify",
+                        str(task_path),
+                        "--check",
+                        f"{sys.executable} -c \"print('ok')\"",
+                        "--manual-smoke",
+                        "smoke-1:passed:observed adapter output",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(_run_cli(["--repo-root", str(repo_root), "run", "review", str(task_path)]), 0)
+            self.assertEqual(_run_cli(["--repo-root", str(repo_root), "finish", str(task_path)]), 0)
+            task = load_task(task_path)
+            review = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(task.metadata.status, "done")
+        self.assertEqual(review["outcome"], "pass")
+        self.assertEqual(review["planned_scope"], ["app.py"])
+        self.assertEqual(review["actual_scope"], ["app.py"])
+        self.assertEqual(review["scope_mismatches"], [])

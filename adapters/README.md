@@ -56,6 +56,13 @@ For `execute`, the adapter may edit files in the task worktree and should return
 
 AXIOM records the adapter receipt, changed files before execution, changed files after execution, and newly changed files.
 
+Full protocol spec:
+- `docs/ADAPTER_PROTOCOL.md`
+
+Reference adapters:
+- `examples/adapters/static_plan_adapter.py`
+- `examples/adapters/file_write_execute_adapter.py`
+
 Still deferred:
 - built-in vendor-specific model adapters
 - built-in local model server clients

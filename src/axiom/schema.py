@@ -77,6 +77,8 @@ _FALLBACK_SCHEMAS: dict[str, dict[str, Any]] = {
                     "policy": {"enum": ["allow", "deny", "escalate"]},
                     "policy_reason": {"type": "string"},
                     "approval_id": {"type": "string"},
+                    "approval_reason": {"type": "string"},
+                    "approval_scope": {"type": "object"},
                 },
             }
         },

@@ -122,13 +122,21 @@ def _plan_write_scope(plan_result: dict[str, object]) -> list[str]:
 
 
 def _is_file_in_scope(file_name: str, write_scope: list[str]) -> bool:
-    if not write_scope:
-        return True
     for scope in write_scope:
         normalized = scope.rstrip("/")
         if file_name == normalized or file_name.startswith(f"{normalized}/"):
             return True
     return False
+
+
+def _scope_mismatches(changed_files: list[str], planned_scope: list[str]) -> list[dict[str, str]]:
+    mismatches: list[dict[str, str]] = []
+    for file_name in changed_files:
+        if not planned_scope:
+            mismatches.append({"file": file_name, "reason": "missing planned write scope"})
+        elif not _is_file_in_scope(file_name, planned_scope):
+            mismatches.append({"file": file_name, "reason": "outside planned write scope"})
+    return mismatches
 
 
 def _deterministic_plan_payload(task_title: str, scope: str, anchors: list[str], checks: list[str]) -> dict[str, object]:
@@ -293,8 +301,26 @@ def run_verify(
     repo_root = repo_root_for(task_path)
     workspace = task_workspace(task)
 
-    automated_checks = [run_command(command, workspace, repo_root=repo_root).__dict__ for command in commands]
-    negative_checks = [run_command(command, workspace, repo_root=repo_root).__dict__ for command in negative_commands]
+    automated_checks = [
+        run_command(
+            command,
+            workspace,
+            repo_root=repo_root,
+            task_id=task.metadata.id,
+            worktree=task.metadata.worktree,
+        ).__dict__
+        for command in commands
+    ]
+    negative_checks = [
+        run_command(
+            command,
+            workspace,
+            repo_root=repo_root,
+            task_id=task.metadata.id,
+            worktree=task.metadata.worktree,
+        ).__dict__
+        for command in negative_commands
+    ]
     all_checks = automated_checks + negative_checks
     manual_smoke_complete = bool(manual_smoke) or not task.metadata.manual_smoke_required
     manual_smoke_passed = all(item["status"] in {"passed", "waived"} for item in manual_smoke)
@@ -420,7 +446,9 @@ def run_review(task_path: Path) -> Path:
     changed_files = task_changed_files(task)
     diff_text = task_diff(task)
     plan_result = latest_phase_result(repo_root, task.metadata.id, "plan")
-    plan_write_scope = _plan_write_scope(plan_result)
+    planned_scope = _plan_write_scope(plan_result)
+    actual_scope = changed_files
+    scope_mismatches = _scope_mismatches(actual_scope, planned_scope)
     if is_git_repo(workspace):
         if not changed_files or diff_text == "No task-scoped diff.":
             findings.append(
@@ -431,14 +459,24 @@ def run_review(task_path: Path) -> Path:
                     "required_fix": "Apply the task changes in the task worktree or explain why this is an evidence-only task.",
                 }
             )
-        for file_name in changed_files:
-            if not _is_file_in_scope(file_name, plan_write_scope):
+        for mismatch in scope_mismatches:
+            if mismatch["reason"] == "missing planned write scope":
+                findings.append(
+                    {
+                        "severity": "high",
+                        "title": "Missing plan write scope.",
+                        "file": mismatch["file"],
+                        "evidence": f"{mismatch['file']} is changed but the latest plan has no write_scope contract.",
+                        "required_fix": "Run or update the plan so changed files are covered by an explicit write_scope.",
+                    }
+                )
+            else:
                 findings.append(
                     {
                         "severity": "high",
                         "title": "Changed file outside plan write scope.",
-                        "file": file_name,
-                        "evidence": f"{file_name} is changed but is not covered by the latest plan write_scope.",
+                        "file": mismatch["file"],
+                        "evidence": f"{mismatch['file']} is changed but is not covered by the latest plan write_scope.",
                         "required_fix": "Update the plan write_scope or move the edit back inside the declared task scope.",
                     }
                 )
@@ -451,7 +489,10 @@ def run_review(task_path: Path) -> Path:
             "findings": findings,
             "next_phase": "execute",
             "changed_files": changed_files,
-            "plan_write_scope": plan_write_scope,
+            "plan_write_scope": planned_scope,
+            "planned_scope": planned_scope,
+            "actual_scope": actual_scope,
+            "scope_mismatches": scope_mismatches,
         }
         status = "review.changes_requested"
         blocked_reason = payload["summary"]
@@ -462,7 +503,10 @@ def run_review(task_path: Path) -> Path:
             "findings": [],
             "next_phase": "done",
             "changed_files": changed_files,
-            "plan_write_scope": plan_write_scope,
+            "plan_write_scope": planned_scope,
+            "planned_scope": planned_scope,
+            "actual_scope": actual_scope,
+            "scope_mismatches": scope_mismatches,
         }
         status = "review.passed"
         blocked_reason = ""

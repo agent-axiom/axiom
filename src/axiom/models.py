@@ -94,6 +94,8 @@ class CommandReceipt:
     policy: str = "allow"
     policy_reason: str = ""
     approval_id: str = ""
+    approval_reason: str = ""
+    approval_scope: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass

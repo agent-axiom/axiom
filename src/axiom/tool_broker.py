@@ -9,7 +9,14 @@ from .policy import evaluate_command
 from .approvals import find_approval
 
 
-def run_command(command: str, cwd: Path, *, repo_root: Path | None = None) -> CommandReceipt:
+def run_command(
+    command: str,
+    cwd: Path,
+    *,
+    repo_root: Path | None = None,
+    task_id: str = "",
+    worktree: str = "",
+) -> CommandReceipt:
     decision = evaluate_command(command)
     try:
         argv = shlex.split(command)
@@ -18,10 +25,15 @@ def run_command(command: str, cwd: Path, *, repo_root: Path | None = None) -> Co
 
     name = argv[0] if argv else "command"
     approval_id = ""
+    approval_reason = ""
+    approval_scope: dict[str, object] = {}
     if decision.action == "escalate" and repo_root is not None:
-        approval = find_approval(repo_root, command)
+        approval = find_approval(repo_root, command, task_id=task_id, worktree=worktree)
         if approval is not None:
             approval_id = str(approval["id"])
+            approval_reason = str(approval.get("reason", ""))
+            scope = approval.get("scope", {})
+            approval_scope = scope if isinstance(scope, dict) else {}
 
     if decision.action != "allow" and not approval_id:
         return CommandReceipt(
@@ -34,6 +46,8 @@ def run_command(command: str, cwd: Path, *, repo_root: Path | None = None) -> Co
             policy=decision.action,
             policy_reason=decision.reason,
             approval_id="",
+            approval_reason="",
+            approval_scope={},
         )
 
     try:
@@ -49,6 +63,8 @@ def run_command(command: str, cwd: Path, *, repo_root: Path | None = None) -> Co
             policy=decision.action,
             policy_reason=decision.reason,
             approval_id=approval_id,
+            approval_reason=approval_reason,
+            approval_scope=approval_scope,
         )
 
     return CommandReceipt(
@@ -61,4 +77,6 @@ def run_command(command: str, cwd: Path, *, repo_root: Path | None = None) -> Co
         policy=decision.action,
         policy_reason=decision.reason,
         approval_id=approval_id,
+        approval_reason=approval_reason,
+        approval_scope=approval_scope,
     )

@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     approve_parser = policy_subparsers.add_parser("approve", help="Persist approval for an escalated command")
     approve_parser.add_argument("--command", dest="policy_target_command", required=True)
     approve_parser.add_argument("--reason", required=True)
+    approve_parser.add_argument("--task", help="Scope approval to a task id or task file")
     policy_subparsers.add_parser("approvals", help="List persisted approvals")
 
     subparsers.add_parser("list", help="List tasks")
@@ -143,7 +144,20 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "policy":
         if args.policy_command == "approve":
-            approval_id = approve_command(repo_root, args.policy_target_command, reason=args.reason)
+            task_id = ""
+            worktree = ""
+            if args.task:
+                task_path = resolve_task_path(repo_root, args.task)
+                task = load_task(task_path)
+                task_id = task.metadata.id
+                worktree = task.metadata.worktree
+            approval_id = approve_command(
+                repo_root,
+                args.policy_target_command,
+                reason=args.reason,
+                task_id=task_id,
+                worktree=worktree,
+            )
             print(approval_id)
             return 0
         if args.policy_command == "approvals":

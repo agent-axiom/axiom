@@ -12,6 +12,35 @@ class SchemaValidationError(ValueError):
 _SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schemas"
 
 _FALLBACK_SCHEMAS: dict[str, dict[str, Any]] = {
+    "design": {
+        "type": "object",
+        "required": ["summary", "repo_anchors"],
+        "properties": {
+            "summary": {"type": "string"},
+            "repo_anchors": {"type": "array", "items": {"type": "string"}},
+        },
+    },
+    "execute": {
+        "type": "object",
+        "required": ["summary", "changed_files", "pre_changed_files", "new_changed_files"],
+        "properties": {
+            "outcome": {"enum": ["passed", "failed", "blocked"]},
+            "summary": {"type": "string"},
+            "changed_files": {"type": "array", "items": {"type": "string"}},
+            "pre_changed_files": {"type": "array", "items": {"type": "string"}},
+            "new_changed_files": {"type": "array", "items": {"type": "string"}},
+            "failures": {"type": "array", "items": {"type": "string"}},
+            "adapter": {"type": "object"},
+        },
+    },
+    "finish": {
+        "type": "object",
+        "required": ["outcome", "summary"],
+        "properties": {
+            "outcome": {"enum": ["passed", "blocked"]},
+            "summary": {"type": "string"},
+        },
+    },
     "plan": {
         "type": "object",
         "required": ["summary", "steps", "manual_smoke", "stop_conditions"],
@@ -150,6 +179,9 @@ def _validate_node(root_schema: dict[str, Any], node_schema: dict[str, Any], val
     if "$ref" in node_schema:
         _validate_node(root_schema, _resolve_ref(root_schema, str(node_schema["$ref"])), value, path)
         return
+
+    if "const" in node_schema and value != node_schema["const"]:
+        raise SchemaValidationError(f"{path}: expected {node_schema['const']!r}")
 
     if "enum" in node_schema and value not in node_schema["enum"]:
         raise SchemaValidationError(f"{path}: expected one of {node_schema['enum']}")

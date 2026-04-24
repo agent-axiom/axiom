@@ -10,11 +10,61 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from axiom.artifacts import latest_phase_result
-from axiom.phases import finish_task, run_design, run_execute, run_plan, run_review, run_verify
+from axiom.phases import (
+    PhaseTransitionError,
+    finish_task,
+    run_design,
+    run_execute,
+    run_plan,
+    run_review,
+    run_verify,
+)
 from axiom.task_file import create_task, load_task, update_task
 
 
 class LifecycleFlowTest(unittest.TestCase):
+    def test_phase_blocks_illegal_transition_and_records_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Illegal transition",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            task = load_task(task_path)
+
+            with self.assertRaises(PhaseTransitionError):
+                run_plan(task_path)
+            task = load_task(task_path)
+            decision = latest_phase_result(repo_root, task.metadata.id, "decision")
+
+        self.assertEqual(task.metadata.status, "draft")
+        self.assertEqual(decision["outcome"], "blocked")
+        self.assertEqual(decision["phase"], "plan")
+        self.assertEqual(decision["from_status"], "draft")
+        self.assertEqual(decision["to_status"], "plan.passed")
+
+    def test_force_allows_transition_and_records_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Forced transition",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+
+            run_plan(task_path, force=True)
+            task = load_task(task_path)
+            decision = latest_phase_result(repo_root, task.metadata.id, "decision")
+
+        self.assertEqual(task.metadata.status, "plan.passed")
+        self.assertEqual(decision["outcome"], "forced")
+        self.assertEqual(decision["phase"], "plan")
+        self.assertEqual(decision["from_status"], "draft")
+        self.assertEqual(decision["to_status"], "plan.passed")
+
     def test_finish_blocks_until_verify_and_review_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
@@ -75,6 +125,63 @@ class LifecycleFlowTest(unittest.TestCase):
         self.assertEqual(verify_result["outcome"], "passed")
         self.assertEqual(verify_result["automated_checks"][0]["status"], "passed")
 
+    def test_verify_times_out_hung_command_and_records_failed_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Timeout",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            run_design(task_path)
+            run_plan(task_path)
+            run_execute(task_path)
+
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"import time; time.sleep(2)\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "timeout observed"}],
+                timeout_seconds=0.1,
+            )
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "verify")
+
+        receipt = result["automated_checks"][0]
+        self.assertEqual(task.metadata.status, "verify.failed")
+        self.assertEqual(result["outcome"], "failed")
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["exit_code"], -1)
+        self.assertIn("timed out after", receipt["stderr"])
+
+    def test_verify_truncates_large_command_output_in_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Output cap",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            run_design(task_path)
+            run_plan(task_path)
+            run_execute(task_path)
+
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('x' * 200)\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "output capped"}],
+                max_output_chars=40,
+            )
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "verify")
+
+        stdout = result["automated_checks"][0]["stdout"]
+        self.assertLessEqual(len(stdout), 40)
+        self.assertIn("truncated", stdout)
+
     def test_plan_uses_repo_anchors_and_detected_make_test_check(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
@@ -95,6 +202,7 @@ class LifecycleFlowTest(unittest.TestCase):
                 },
             )
 
+            run_design(task_path)
             run_plan(task_path)
             task = load_task(task_path)
             result = latest_phase_result(repo_root, task.metadata.id, "plan")
@@ -125,6 +233,9 @@ class LifecycleFlowTest(unittest.TestCase):
                 section_updates={"Docs Impact": "No documentation changes required."},
                 metadata_updates={"docs_status": "not_needed"},
             )
+            run_design(task_path)
+            run_plan(task_path)
+            run_execute(task_path)
             run_verify(
                 task_path,
                 commands=[f"{sys.executable} -c \"print('ok')\""],
@@ -163,9 +274,11 @@ class LifecycleFlowTest(unittest.TestCase):
                 },
                 metadata_updates={"docs_status": "not_needed"},
             )
+            run_design(task_path)
             run_plan(task_path)
             task = load_task(task_path)
             Path(task.metadata.worktree, "app.py").write_text("print('changed')\n", encoding="utf-8")
+            run_execute(task_path)
             run_verify(
                 task_path,
                 commands=[f"{sys.executable} -c \"print('ok')\""],
@@ -208,9 +321,11 @@ class LifecycleFlowTest(unittest.TestCase):
                 },
                 metadata_updates={"docs_status": "not_needed"},
             )
+            run_design(task_path)
             run_plan(task_path)
             task = load_task(task_path)
             Path(task.metadata.worktree, "README.md").write_text("changed outside scope\n", encoding="utf-8")
+            run_execute(task_path)
             run_verify(
                 task_path,
                 commands=[f"{sys.executable} -c \"print('ok')\""],
@@ -252,6 +367,8 @@ class LifecycleFlowTest(unittest.TestCase):
                 section_updates={"Docs Impact": "No documentation changes required."},
                 metadata_updates={"docs_status": "not_needed"},
             )
+            run_design(task_path)
+            run_execute(task_path, force=True)
             run_verify(
                 task_path,
                 commands=[f"{sys.executable} -c \"print('ok')\""],
@@ -268,6 +385,40 @@ class LifecycleFlowTest(unittest.TestCase):
         self.assertEqual(
             result["scope_mismatches"],
             [{"file": "app.py", "reason": "missing planned write scope"}],
+        )
+
+    def test_review_blocks_degraded_mode_without_manual_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Degraded review",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            update_task(
+                task_path,
+                section_updates={"Docs Impact": "No documentation changes required."},
+                metadata_updates={"manual_smoke_required": False, "docs_status": "not_needed"},
+            )
+            run_design(task_path)
+            run_plan(task_path)
+            run_execute(task_path)
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('ok')\""],
+                negative_commands=[],
+                manual_smoke=[],
+            )
+
+            run_review(task_path)
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(task.metadata.isolation_mode, "degraded")
+        self.assertEqual(result["outcome"], "changes_requested")
+        self.assertTrue(
+            any(finding["title"] == "Degraded isolation requires manual evidence." for finding in result["findings"])
         )
 
     def test_finish_respects_disabled_verification_and_review_flags(self) -> None:
@@ -306,6 +457,8 @@ class LifecycleFlowTest(unittest.TestCase):
                 kind="chore",
                 now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
             )
+            run_design(task_path)
+            run_plan(task_path)
             run_execute(task_path)
             run_verify(
                 task_path,

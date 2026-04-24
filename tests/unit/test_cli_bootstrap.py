@@ -27,6 +27,26 @@ class BootstrapCLITest(unittest.TestCase):
         namespace = parser.parse_args(["run", "plan", "AX-1", "--adapter-command", "python3 adapter.py"])
         self.assertEqual(namespace.adapter_command, "python3 adapter.py")
 
+    def test_run_phase_accepts_force_override(self) -> None:
+        parser = build_parser()
+        namespace = parser.parse_args(["run", "plan", "AX-1", "--force"])
+        self.assertTrue(namespace.force)
+
+    def test_verify_accepts_timeout_and_output_limit(self) -> None:
+        parser = build_parser()
+        namespace = parser.parse_args(
+            ["run", "verify", "AX-1", "--timeout-seconds", "0.5", "--max-output-chars", "64"]
+        )
+        self.assertEqual(namespace.timeout_seconds, 0.5)
+        self.assertEqual(namespace.max_output_chars, 64)
+
+    def test_worktree_commands_parse(self) -> None:
+        parser = build_parser()
+        namespace = parser.parse_args(["worktree", "path", "AX-1"])
+        self.assertEqual(namespace.command, "worktree")
+        self.assertEqual(namespace.worktree_command, "path")
+        self.assertEqual(namespace.task, "AX-1")
+
     def test_policy_approve_keeps_top_level_command(self) -> None:
         parser = build_parser()
         namespace = parser.parse_args(

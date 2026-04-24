@@ -57,6 +57,9 @@
           "reason": {"type": "string"}
         }
       }
+    },
+    "isolation_mode": {
+      "enum": ["worktree", "degraded"]
     }
   }
 }

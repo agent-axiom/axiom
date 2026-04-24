@@ -175,8 +175,10 @@ def create_task(
         now_iso=current_time.isoformat(),
         repo_root=repo_root.resolve(),
         base_branch=workspace.base_branch,
+        base_commit=workspace.base_commit,
         branch=workspace.branch,
         worktree=workspace.worktree,
+        isolation_mode=workspace.isolation_mode,
     )
     if workspace.bootstrap_reason:
         document.sections["Assumptions"] = workspace.bootstrap_reason

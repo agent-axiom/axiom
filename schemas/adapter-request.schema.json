@@ -10,7 +10,9 @@
     "repo_root",
     "workspace",
     "base_branch",
+    "base_commit",
     "branch",
+    "isolation_mode",
     "sections",
     "latest_artifacts",
     "diff"
@@ -20,7 +22,7 @@
       "const": "axiom.adapter.v1"
     },
     "phase": {
-      "enum": ["plan", "execute", "review"]
+      "enum": ["plan", "execute"]
     },
     "task": {
       "type": "object",
@@ -37,7 +39,9 @@
     "repo_root": {"type": "string"},
     "workspace": {"type": "string"},
     "base_branch": {"type": "string"},
+    "base_commit": {"type": "string"},
     "branch": {"type": "string"},
+    "isolation_mode": {"enum": ["worktree", "degraded"]},
     "sections": {"type": "object"},
     "latest_artifacts": {"type": "object"},
     "diff": {"type": "string"}

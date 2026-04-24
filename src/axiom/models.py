@@ -14,8 +14,10 @@ class TaskMetadata:
     updated_at: str
     repo_root: str
     base_branch: str
+    base_commit: str
     branch: str
     worktree: str
+    isolation_mode: str = "degraded"
     risk: str = "medium"
     review_required: bool = True
     verification_required: bool = True
@@ -34,8 +36,10 @@ class TaskMetadata:
             updated_at=str(payload.get("updated_at", "")),
             repo_root=str(payload.get("repo_root", "")),
             base_branch=str(payload.get("base_branch", "main")),
+            base_commit=str(payload.get("base_commit", "")),
             branch=str(payload.get("branch", "")),
             worktree=str(payload.get("worktree", "")),
+            isolation_mode=str(payload.get("isolation_mode", "degraded")),
             risk=str(payload.get("risk", "medium")),
             review_required=bool(payload.get("review_required", True)),
             verification_required=bool(payload.get("verification_required", True)),
@@ -54,8 +58,10 @@ class TaskMetadata:
             "updated_at": self.updated_at,
             "repo_root": self.repo_root,
             "base_branch": self.base_branch,
+            "base_commit": self.base_commit,
             "branch": self.branch,
             "worktree": self.worktree,
+            "isolation_mode": self.isolation_mode,
             "risk": self.risk,
             "review_required": self.review_required,
             "verification_required": self.verification_required,

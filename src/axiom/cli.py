@@ -6,9 +6,10 @@ import sys
 from pathlib import Path
 
 from .approvals import approve_command, list_approvals
-from .git import task_diff
-from .phases import finish_task, run_design, run_execute, run_plan, run_review, run_verify
+from .git import remove_task_worktree, task_diff
+from .phases import PhaseTransitionError, finish_task, run_design, run_execute, run_plan, run_review, run_verify
 from .task_file import create_task, list_task_paths, load_task, resolve_task_path
+from .tool_broker import DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS
 from .version import build_metadata
 
 
@@ -27,6 +28,16 @@ def build_parser() -> argparse.ArgumentParser:
     adapter_parser = subparsers.add_parser("adapter", help="Inspect agent adapter support")
     adapter_subparsers = adapter_parser.add_subparsers(dest="adapter_command", required=True)
     adapter_subparsers.add_parser("list", help="List built-in adapter protocols")
+
+    worktree_parser = subparsers.add_parser("worktree", help="Inspect task worktrees")
+    worktree_subparsers = worktree_parser.add_subparsers(dest="worktree_command", required=True)
+    worktree_subparsers.add_parser("list", help="List task worktrees")
+    worktree_path_parser = worktree_subparsers.add_parser("path", help="Print a task worktree path")
+    worktree_path_parser.add_argument("task")
+
+    cleanup_parser = subparsers.add_parser("cleanup", help="Remove a managed task worktree")
+    cleanup_parser.add_argument("task")
+    cleanup_parser.add_argument("--force", action="store_true", help="Allow git worktree removal")
 
     policy_parser = subparsers.add_parser("policy", help="Manage local AXIOM policy approvals")
     policy_subparsers = policy_parser.add_subparsers(dest="policy_command", required=True)
@@ -52,24 +63,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     design_parser = run_subparsers.add_parser("design")
     design_parser.add_argument("task")
+    design_parser.add_argument("--force", action="store_true")
 
     plan_parser = run_subparsers.add_parser("plan")
     plan_parser.add_argument("task")
     plan_parser.add_argument("--adapter-command")
+    plan_parser.add_argument("--force", action="store_true")
 
     execute_parser = run_subparsers.add_parser("execute")
     execute_parser.add_argument("task")
     execute_parser.add_argument("--note", default="Execution recorded.")
     execute_parser.add_argument("--adapter-command")
+    execute_parser.add_argument("--force", action="store_true")
 
     verify_parser = run_subparsers.add_parser("verify")
     verify_parser.add_argument("task")
     verify_parser.add_argument("--check", action="append", default=[])
     verify_parser.add_argument("--negative-check", action="append", default=[])
     verify_parser.add_argument("--manual-smoke", action="append", default=[])
+    verify_parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_COMMAND_TIMEOUT_SECONDS)
+    verify_parser.add_argument("--max-output-chars", type=int, default=DEFAULT_MAX_OUTPUT_CHARS)
+    verify_parser.add_argument("--force", action="store_true")
 
     review_parser = run_subparsers.add_parser("review")
     review_parser.add_argument("task")
+    review_parser.add_argument("--force", action="store_true")
 
     finish_parser = subparsers.add_parser("finish", help="Complete a task")
     finish_parser.add_argument("task")
@@ -94,8 +112,12 @@ def _next_step_for(status: str) -> str:
         return "run design"
     if status == "design.passed":
         return "run plan"
+    if status == "plan.blocked":
+        return "fix adapter/planner input, then run plan"
     if status == "plan.passed":
         return "run execute"
+    if status == "execute.failed":
+        return "fix adapter/execution issue, then run execute"
     if status == "execute.passed":
         return "run verify"
     if status in {"verify.failed", "verify.blocked", "review.changes_requested"}:
@@ -115,8 +137,10 @@ def _print_task_summary(task_path: Path) -> None:
     print(f"id: {task.metadata.id}")
     print(f"status: {task.metadata.status}")
     print(f"path: {task_path}")
+    print(f"base_commit: {task.metadata.base_commit}")
     print(f"branch: {task.metadata.branch}")
     print(f"worktree: {task.metadata.worktree}")
+    print(f"isolation_mode: {task.metadata.isolation_mode}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -141,6 +165,28 @@ def main(argv: list[str] | None = None) -> int:
         if args.adapter_command == "list":
             print("command\taxiom.adapter.v1 JSON over stdin/stdout")
             return 0
+
+    if args.command == "worktree":
+        if args.worktree_command == "list":
+            for task_path in list_task_paths(repo_root):
+                task = load_task(task_path)
+                print(f"{task.metadata.id} {task.metadata.status} {task.metadata.isolation_mode} {task.metadata.worktree}")
+            return 0
+        if args.worktree_command == "path":
+            task_path = resolve_task_path(repo_root, args.task)
+            task = load_task(task_path)
+            print(task.metadata.worktree)
+            return 0
+
+    if args.command == "cleanup":
+        if not args.force:
+            print("cleanup requires --force")
+            return 1
+        task_path = resolve_task_path(repo_root, args.task)
+        task = load_task(task_path)
+        removed, message = remove_task_worktree(task, force=True)
+        print(message)
+        return 0 if removed else 1
 
     if args.command == "policy":
         if args.policy_command == "approve":
@@ -190,25 +236,37 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         task_path = resolve_task_path(repo_root, args.task)
-        if args.phase == "design":
-            artifact = run_design(task_path)
-        elif args.phase == "plan":
-            artifact = run_plan(task_path, adapter_command=args.adapter_command)
-        elif args.phase == "execute":
-            artifact = run_execute(task_path, note=args.note, adapter_command=args.adapter_command)
-        elif args.phase == "verify":
-            manual_smoke = _parse_manual_smoke(args.manual_smoke)
-            artifact = run_verify(
-                task_path,
-                commands=args.check,
-                negative_commands=args.negative_check,
-                manual_smoke=manual_smoke,
-            )
-        elif args.phase == "review":
-            artifact = run_review(task_path)
-        else:
-            parser.error(f"unsupported phase {args.phase}")
-            return 2
+        try:
+            if args.phase == "design":
+                artifact = run_design(task_path, force=args.force)
+            elif args.phase == "plan":
+                artifact = run_plan(task_path, adapter_command=args.adapter_command, force=args.force)
+            elif args.phase == "execute":
+                artifact = run_execute(
+                    task_path,
+                    note=args.note,
+                    adapter_command=args.adapter_command,
+                    force=args.force,
+                )
+            elif args.phase == "verify":
+                manual_smoke = _parse_manual_smoke(args.manual_smoke)
+                artifact = run_verify(
+                    task_path,
+                    commands=args.check,
+                    negative_commands=args.negative_check,
+                    manual_smoke=manual_smoke,
+                    timeout_seconds=args.timeout_seconds,
+                    max_output_chars=args.max_output_chars,
+                    force=args.force,
+                )
+            elif args.phase == "review":
+                artifact = run_review(task_path, force=args.force)
+            else:
+                parser.error(f"unsupported phase {args.phase}")
+                return 2
+        except PhaseTransitionError as exc:
+            print(str(exc))
+            return 1
         print(artifact)
         return 0
 

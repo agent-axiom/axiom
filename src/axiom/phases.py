@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .adapters import build_adapter_request, invoke_command_adapter
+from .adapters import AdapterError, build_adapter_request, invoke_command_adapter
 from .artifacts import latest_phase_result, write_phase_result
 from .git import is_git_repo, task_changed_files, task_diff, task_workspace
 from .models import FinishDecision
-from .schema import validate_phase_payload
+from .schema import SchemaValidationError, validate_phase_payload
 from .state_machine import can_transition
 from .task_file import load_task, repo_root_for, update_task
-from .tool_broker import run_command
+from .tool_broker import DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS, run_command
+
+
+class PhaseTransitionError(RuntimeError):
+    pass
 
 
 def _write_validated_phase_result(
@@ -21,6 +25,46 @@ def _write_validated_phase_result(
 ) -> Path:
     validate_phase_payload(phase, payload)
     return write_phase_result(repo_root=repo_root, task_id=task_id, phase=phase, payload=payload)
+
+
+def _write_decision(
+    *,
+    repo_root: Path,
+    task_id: str,
+    payload: dict[str, object],
+) -> Path:
+    return write_phase_result(repo_root=repo_root, task_id=task_id, phase="decision", payload=payload)
+
+
+def _enforce_phase_transition(
+    *,
+    task_path: Path,
+    phase: str,
+    next_status: str,
+    force: bool,
+) -> None:
+    task = load_task(task_path)
+    repo_root = repo_root_for(task_path)
+    allowed, reason = can_transition(current_status=task.metadata.status, next_status=next_status)
+    if allowed:
+        return
+
+    outcome = "forced" if force else "blocked"
+    payload = {
+        "outcome": outcome,
+        "summary": f"{phase} transition {outcome}: {reason}",
+        "phase": phase,
+        "from_status": task.metadata.status,
+        "to_status": next_status,
+        "reason": reason,
+        "force": force,
+    }
+    _write_decision(repo_root=repo_root, task_id=task.metadata.id, payload=payload)
+    if force:
+        return
+
+    update_task(task_path, metadata_updates={"blocked_reason": payload["summary"]})
+    raise PhaseTransitionError(str(payload["summary"]))
 
 
 def _render_plan_markdown(payload: dict[str, object]) -> str:
@@ -192,7 +236,8 @@ def _deterministic_plan_payload(task_title: str, scope: str, anchors: list[str],
     }
 
 
-def run_design(task_path: Path) -> Path:
+def run_design(task_path: Path, *, force: bool = False) -> Path:
+    _enforce_phase_transition(task_path=task_path, phase="design", next_status="design.passed", force=force)
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
     design = task.sections.get("Design", "").strip()
@@ -219,7 +264,20 @@ def run_design(task_path: Path) -> Path:
     return artifact_path
 
 
-def run_plan(task_path: Path, *, adapter_command: str | None = None) -> Path:
+def _blocked_plan_payload(message: str, receipt: dict[str, object]) -> dict[str, object]:
+    return {
+        "outcome": "blocked",
+        "summary": "Plan adapter failed.",
+        "steps": [],
+        "manual_smoke": [],
+        "stop_conditions": ["Fix or replace the adapter, then rerun plan."],
+        "failures": [message],
+        "adapter": receipt,
+    }
+
+
+def run_plan(task_path: Path, *, adapter_command: str | None = None, force: bool = False) -> Path:
+    _enforce_phase_transition(task_path=task_path, phase="plan", next_status="plan.passed", force=force)
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
     anchors = _anchor_paths(task.sections.get("Repo Anchors", ""))
@@ -230,9 +288,36 @@ def run_plan(task_path: Path, *, adapter_command: str | None = None) -> Path:
 
     if adapter_command:
         request = build_adapter_request(phase="plan", task=task, task_path=task_path)
-        adapter_result = invoke_command_adapter(command=adapter_command, request=request, cwd=workspace)
+        try:
+            adapter_result = invoke_command_adapter(command=adapter_command, request=request, cwd=workspace)
+        except AdapterError as exc:
+            payload = _blocked_plan_payload(str(exc), exc.receipt)
+            artifact_path = _write_validated_phase_result(
+                repo_root=repo_root, task_id=task.metadata.id, phase="plan", payload=payload
+            )
+            update_task(
+                task_path,
+                status="plan.blocked",
+                section_updates={"Plan": _render_plan_markdown(payload)},
+                metadata_updates={"blocked_reason": str(exc)},
+            )
+            return artifact_path
         payload = adapter_result.payload
         payload["adapter"] = adapter_result.receipt
+        try:
+            validate_phase_payload("plan", payload)
+        except SchemaValidationError as exc:
+            payload = _blocked_plan_payload(f"adapter payload failed schema validation: {exc}", adapter_result.receipt)
+            artifact_path = _write_validated_phase_result(
+                repo_root=repo_root, task_id=task.metadata.id, phase="plan", payload=payload
+            )
+            update_task(
+                task_path,
+                status="plan.blocked",
+                section_updates={"Plan": _render_plan_markdown(payload)},
+                metadata_updates={"blocked_reason": str(exc)},
+            )
+            return artifact_path
     else:
         payload = _deterministic_plan_payload(task.metadata.title, scope, anchors, checks)
 
@@ -252,7 +337,9 @@ def run_execute(
     *,
     note: str = "Execution recorded.",
     adapter_command: str | None = None,
+    force: bool = False,
 ) -> Path:
+    _enforce_phase_transition(task_path=task_path, phase="execute", next_status="execute.passed", force=force)
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
     workspace = task_workspace(task)
@@ -267,7 +354,29 @@ def run_execute(
             latest_artifacts={"plan": latest_phase_result(repo_root, task.metadata.id, "plan")},
             diff=task_diff(task),
         )
-        adapter_result = invoke_command_adapter(command=adapter_command, request=request, cwd=workspace)
+        try:
+            adapter_result = invoke_command_adapter(command=adapter_command, request=request, cwd=workspace)
+        except AdapterError as exc:
+            changed_files = task_changed_files(task)
+            payload = {
+                "outcome": "failed",
+                "summary": "Execute adapter failed.",
+                "changed_files": changed_files,
+                "pre_changed_files": pre_changed_files,
+                "new_changed_files": sorted(set(changed_files) - set(pre_changed_files)),
+                "failures": [str(exc)],
+                "adapter": exc.receipt,
+            }
+            artifact_path = _write_validated_phase_result(
+                repo_root=repo_root, task_id=task.metadata.id, phase="execute", payload=payload
+            )
+            update_task(
+                task_path,
+                status="execute.failed",
+                section_updates={"Execution Log": _render_execution_markdown(payload)},
+                metadata_updates={"blocked_reason": str(exc)},
+            )
+            return artifact_path
         adapter_receipt = adapter_result.receipt
         summary = str(adapter_result.payload.get("summary") or note)
     changed_files = task_changed_files(task)
@@ -296,7 +405,11 @@ def run_verify(
     commands: list[str],
     negative_commands: list[str],
     manual_smoke: list[dict[str, str]],
+    timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
+    force: bool = False,
 ) -> Path:
+    _enforce_phase_transition(task_path=task_path, phase="verify", next_status="verify.passed", force=force)
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
     workspace = task_workspace(task)
@@ -308,6 +421,8 @@ def run_verify(
             repo_root=repo_root,
             task_id=task.metadata.id,
             worktree=task.metadata.worktree,
+            timeout_seconds=timeout_seconds,
+            max_output_chars=max_output_chars,
         ).__dict__
         for command in commands
     ]
@@ -318,6 +433,8 @@ def run_verify(
             repo_root=repo_root,
             task_id=task.metadata.id,
             worktree=task.metadata.worktree,
+            timeout_seconds=timeout_seconds,
+            max_output_chars=max_output_chars,
         ).__dict__
         for command in negative_commands
     ]
@@ -398,7 +515,8 @@ def _diff_findings(diff_text: str) -> list[dict[str, object]]:
     return findings
 
 
-def run_review(task_path: Path) -> Path:
+def run_review(task_path: Path, *, force: bool = False) -> Path:
+    _enforce_phase_transition(task_path=task_path, phase="review", next_status="review.passed", force=force)
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
     verify_result = latest_phase_result(repo_root, task.metadata.id, "verify")
@@ -428,6 +546,16 @@ def run_review(task_path: Path) -> Path:
         return artifact_path
 
     findings: list[dict[str, object]] = []
+    manual_smoke = verify_result.get("manual_smoke", [])
+    if task.metadata.isolation_mode == "degraded" and not manual_smoke:
+        findings.append(
+            {
+                "severity": "blocker",
+                "title": "Degraded isolation requires manual evidence.",
+                "evidence": "Task is running without first-class git worktree isolation and latest verify artifact has no manual smoke evidence.",
+                "required_fix": "Record at least one manual smoke result or move the task into a git repo with a HEAD commit.",
+            }
+        )
     docs_text = task.sections.get("Docs Impact", "").strip()
     docs_status = task.metadata.docs_status
     if not docs_text or docs_text.lower().startswith("pending"):
@@ -449,13 +577,13 @@ def run_review(task_path: Path) -> Path:
     planned_scope = _plan_write_scope(plan_result)
     actual_scope = changed_files
     scope_mismatches = _scope_mismatches(actual_scope, planned_scope)
-    if is_git_repo(workspace):
+    if task.metadata.isolation_mode == "worktree" and is_git_repo(workspace):
         if not changed_files or diff_text == "No task-scoped diff.":
             findings.append(
                 {
                     "severity": "high",
                     "title": "No task-scoped diff found.",
-                    "evidence": "Verification passed, but the task worktree has no changed files against the base branch.",
+                    "evidence": "Verification passed, but the task worktree has no changed files against the immutable base commit.",
                     "required_fix": "Apply the task changes in the task worktree or explain why this is an evidence-only task.",
                 }
             )
@@ -493,6 +621,7 @@ def run_review(task_path: Path) -> Path:
             "planned_scope": planned_scope,
             "actual_scope": actual_scope,
             "scope_mismatches": scope_mismatches,
+            "isolation_mode": task.metadata.isolation_mode,
         }
         status = "review.changes_requested"
         blocked_reason = payload["summary"]
@@ -507,6 +636,7 @@ def run_review(task_path: Path) -> Path:
             "planned_scope": planned_scope,
             "actual_scope": actual_scope,
             "scope_mismatches": scope_mismatches,
+            "isolation_mode": task.metadata.isolation_mode,
         }
         status = "review.passed"
         blocked_reason = ""

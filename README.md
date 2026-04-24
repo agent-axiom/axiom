@@ -9,8 +9,9 @@ AXIOM is not a prompt pack and not a giant autonomous IDE. The core idea is that
 This first slice includes:
 - one markdown task file per task under `.axiom/tasks/`
 - first-class git worktree provisioning for git repositories with an initial commit
+- immutable `base_commit` tracking for task-scoped diffs
 - structured JSON artifacts under `.axiom/artifacts/shared/`
-- a lifecycle CLI with `make`, `resume`, `list`, `show`, `diff`, `run <phase>`, `finish`, `adapter`, `policy`, and `version`
+- a lifecycle CLI with `make`, `resume`, `list`, `show`, `diff`, `run <phase>`, `finish`, `adapter`, `policy`, `worktree`, `cleanup`, and `version`
 - an explicit command-adapter protocol for local model shims and host coding agents
 - mandatory verification and review gates before completion
 - release metadata files and GitHub Actions workflows for transparent releases
@@ -25,6 +26,7 @@ It does not just route between prompt files. Its job is to enforce workflow disc
 - create and update one markdown task file per task
 - provision an isolated git worktree per task when the target repository supports it
 - enforce task status transitions
+- record blocked or forced lifecycle overrides as decision artifacts
 - persist phase artifacts under `.axiom/artifacts/`
 - optionally call a local command adapter for planning and execution
 - gate completion on verify and review
@@ -314,6 +316,7 @@ bin/axiom --repo-root "$(pwd)" run execute "$TASK_ID" --note "Applied code chang
 bin/axiom --repo-root "$(pwd)" run verify "$TASK_ID" --check "python3 -m unittest discover -s tests/unit -v" --manual-smoke "smoke-1:passed:Observed expected behavior"
 bin/axiom --repo-root "$(pwd)" run review "$TASK_ID"
 bin/axiom --repo-root "$(pwd)" finish "$TASK_ID"
+bin/axiom --repo-root "$(pwd)" worktree path "$TASK_ID"
 bin/axiom version --verbose
 ```
 
@@ -325,6 +328,11 @@ Adapter protocol:
 - Spec: [docs/ADAPTER_PROTOCOL.md](docs/ADAPTER_PROTOCOL.md)
 - Reference plan adapter: `examples/adapters/static_plan_adapter.py`
 - Reference execute adapter: `examples/adapters/file_write_execute_adapter.py`
+- Reference OpenAI-compatible plan shim: `examples/adapters/openai_compatible_plan_adapter.py`
+
+Command adapters are trusted local commands. AXIOM does not sandbox them. They run in the task worktree and can read or write files available to the current OS user. Use them only from trusted internal paths. Optional guardrails are available through:
+- `AXIOM_ADAPTER_ALLOWLIST`: path-separated list of allowed adapter script or executable paths
+- `AXIOM_ADAPTER_SHA256`: path-separated `absolute_path=sha256` pins for adapter files
 
 Policy approvals are explicit and local. Escalated commands are blocked until approved:
 
@@ -339,13 +347,17 @@ bin/axiom --repo-root "$(pwd)" policy approvals
 
 Review is contract-aware for git tasks. The latest plan write scope is compared against the task-scoped changed files, and the review artifact records `planned_scope`, `actual_scope`, and `scope_mismatches`.
 
+Verification commands are run through the tool broker with policy checks, timeouts, and stdout/stderr capture limits. Hung commands produce failed receipts with `exit_code=-1`.
+
 ## Current Bootstrap Limitation
 
 This repository now proves the load-bearing local workflow and release transparency pieces first:
 - task file lifecycle
 - real git worktree provisioning for repositories with an initial commit
-- task-scoped diff and changed-file tracking
+- task-scoped diff and changed-file tracking against immutable `base_commit`
 - command-adapter protocol for local model shims and host agents
+- persisted adapter failure artifacts
+- strict phase transition enforcement with explicit `--force` override logging
 - persisted artifacts
 - verification and review gates
 - deterministic local CLI control
@@ -355,7 +367,7 @@ This repository now proves the load-bearing local workflow and release transpare
 It still does not ship:
 - vendor-specific model adapters
 - a built-in autonomous code-editing agent
-- native local model server integrations
+- native local model server integrations beyond the small OpenAI-compatible reference plan shim
 - reproducible builds
 - native macOS signing or notarization
 
@@ -370,6 +382,16 @@ bin/axiom --repo-root "$(pwd)" run plan "$TASK_ID" \
 bin/axiom --repo-root "$(pwd)" run execute "$TASK_ID" \
   --adapter-command "python3 /opt/axiom-adapters/local_executor.py"
 ```
+
+Worktree lifecycle helpers:
+
+```bash
+bin/axiom --repo-root "$(pwd)" worktree list
+bin/axiom --repo-root "$(pwd)" worktree path "$TASK_ID"
+bin/axiom --repo-root "$(pwd)" cleanup "$TASK_ID" --force
+```
+
+Non-git repositories and git repositories without an initial commit run in `isolation_mode: degraded`. In degraded mode, review requires manual smoke evidence before it can pass.
 
 ## Repository Layout
 

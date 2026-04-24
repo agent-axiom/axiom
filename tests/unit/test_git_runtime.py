@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from axiom.artifacts import latest_phase_result
 from axiom.cli import main
-from axiom.phases import run_execute
+from axiom.phases import run_design, run_execute, run_plan
 from axiom.task_file import create_task, load_task
 
 
@@ -61,6 +61,8 @@ class GitRuntimeTest(unittest.TestCase):
             self.assertTrue((worktree / "app.py").exists())
             self.assertEqual(_git(worktree, "branch", "--show-current").stdout.strip(), task.metadata.branch)
             self.assertEqual(_git(repo_root, "check-ignore", "-q", ".worktrees", check=False).returncode, 0)
+            self.assertEqual(task.metadata.isolation_mode, "worktree")
+            self.assertEqual(task.metadata.base_commit, _git(repo_root, "rev-parse", "HEAD").stdout.strip())
 
     def test_create_task_records_bootstrap_fallback_for_git_repo_without_head(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -76,7 +78,40 @@ class GitRuntimeTest(unittest.TestCase):
             task = load_task(task_path)
 
             self.assertEqual(Path(task.metadata.worktree).resolve(), repo_root.resolve())
+            self.assertEqual(task.metadata.isolation_mode, "degraded")
+            self.assertEqual(task.metadata.base_commit, "")
             self.assertIn("repository has no initial commit", task.sections["Assumptions"])
+
+    def test_task_diff_uses_immutable_base_commit_not_moving_base_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            _init_repo(repo_root)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Immutable base",
+                kind="feature",
+                now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
+            )
+            task = load_task(task_path)
+            base_commit = task.metadata.base_commit
+            self.assertTrue(base_commit)
+
+            (repo_root / "app.py").write_text("print('main advanced')\n", encoding="utf-8")
+            _git(repo_root, "add", "app.py")
+            _git(repo_root, "commit", "-m", "advance main")
+
+            worktree = Path(task.metadata.worktree)
+            (worktree / "app.py").write_text("print('task change')\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(["--repo-root", str(repo_root), "diff", str(task_path)])
+            diff_output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("-print('base')", diff_output)
+        self.assertIn("+print('task change')", diff_output)
+        self.assertNotIn("-print('main advanced')", diff_output)
 
     def test_diff_command_uses_task_worktree_not_dirty_source_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -113,6 +148,8 @@ class GitRuntimeTest(unittest.TestCase):
                 kind="feature",
                 now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
             )
+            run_design(task_path)
+            run_plan(task_path)
             task = load_task(task_path)
             worktree = Path(task.metadata.worktree)
             (worktree / "app.py").write_text("print('task change')\n", encoding="utf-8")

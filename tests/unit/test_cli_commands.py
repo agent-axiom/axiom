@@ -41,6 +41,35 @@ class CommandIntegrationTest(unittest.TestCase):
         self.assertEqual(show_code, 0)
         self.assertIn("Bootstrap task", show_stdout.getvalue())
 
+    def test_worktree_list_and_path_commands_use_task_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(main(["--repo-root", str(repo_root), "make", "Worktree UX"]), 0)
+            task_path = Path(stdout.getvalue().strip())
+            task = load_task(task_path)
+
+            list_stdout = io.StringIO()
+            with redirect_stdout(list_stdout):
+                list_code = main(["--repo-root", str(repo_root), "worktree", "list"])
+            path_stdout = io.StringIO()
+            with redirect_stdout(path_stdout):
+                path_code = main(["--repo-root", str(repo_root), "worktree", "path", str(task_path)])
+
+        self.assertEqual(list_code, 0)
+        self.assertEqual(path_code, 0)
+        self.assertIn(task.metadata.id, list_stdout.getvalue())
+        self.assertIn(task.metadata.isolation_mode, list_stdout.getvalue())
+        self.assertEqual(path_stdout.getvalue().strip(), task.metadata.worktree)
+
     def test_full_cli_lifecycle_with_adapter_plan_and_execute(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)

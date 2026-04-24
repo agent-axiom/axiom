@@ -3,13 +3,15 @@ from __future__ import annotations
 
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "draft": {"design.passed"},
-    "design.passed": {"plan.passed"},
-    "plan.passed": {"execute.passed"},
+    "design.passed": {"plan.passed", "plan.blocked"},
+    "plan.blocked": {"plan.passed"},
+    "plan.passed": {"execute.passed", "execute.failed"},
+    "execute.failed": {"execute.passed"},
     "execute.passed": {"verify.passed", "verify.failed", "verify.blocked", "done"},
-    "verify.failed": {"execute.passed"},
-    "verify.blocked": {"execute.passed"},
+    "verify.failed": {"execute.passed", "verify.passed", "verify.failed", "verify.blocked"},
+    "verify.blocked": {"execute.passed", "verify.passed", "verify.failed", "verify.blocked"},
     "verify.passed": {"review.passed", "review.blocked", "review.changes_requested", "done"},
-    "review.blocked": {"verify.passed"},
+    "review.blocked": {"verify.passed", "review.passed", "review.blocked", "review.changes_requested"},
     "review.changes_requested": {"execute.passed", "plan.passed"},
     "review.passed": {"done"},
 }

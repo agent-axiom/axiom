@@ -8,6 +8,13 @@ The protocol is intentionally small and local-first:
 - The adapter returns one JSON object on stdout.
 - The adapter runs in the task worktree, not the source checkout.
 - AXIOM validates phase outputs before persisting artifacts.
+- AXIOM persists adapter failures as phase artifacts for debugging.
+
+Security boundary:
+- Command adapters are trusted local commands, not sandboxes.
+- They run as the current OS user and can access files available to that user.
+- Use `AXIOM_ADAPTER_ALLOWLIST` to restrict allowed adapter paths.
+- Use `AXIOM_ADAPTER_SHA256` to pin adapter file hashes as `absolute_path=sha256`.
 
 Protocol name:
 
@@ -37,7 +44,9 @@ Adapter request shape:
   "repo_root": "/repo",
   "workspace": "/repo/.worktrees/AX-20260424-001-fix-retry-logic",
   "base_branch": "main",
+  "base_commit": "9f2b1d8f0e4d7d7efc4b0e9a8b2c64e25f735b61",
   "branch": "axiom/AX-20260424-001-fix-retry-logic",
+  "isolation_mode": "worktree",
   "sections": {},
   "latest_artifacts": {},
   "diff": ""
@@ -62,10 +71,11 @@ Full protocol spec:
 Reference adapters:
 - `examples/adapters/static_plan_adapter.py`
 - `examples/adapters/file_write_execute_adapter.py`
+- `examples/adapters/openai_compatible_plan_adapter.py`
 
 Still deferred:
 - built-in vendor-specific model adapters
-- built-in local model server clients
+- production-grade local model server clients
 - long-running agent sessions
 - streaming adapter output
 - automatic approval of escalated tools

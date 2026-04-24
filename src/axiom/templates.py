@@ -27,8 +27,10 @@ FRONTMATTER_ORDER = [
     "updated_at",
     "repo_root",
     "base_branch",
+    "base_commit",
     "branch",
     "worktree",
+    "isolation_mode",
     "risk",
     "review_required",
     "verification_required",
@@ -52,8 +54,10 @@ def render_new_task(
     now_iso: str,
     repo_root: Path,
     base_branch: str,
+    base_commit: str,
     branch: str,
     worktree: str,
+    isolation_mode: str,
 ) -> TaskDocument:
     metadata = TaskMetadata(
         id=task_id,
@@ -64,8 +68,10 @@ def render_new_task(
         updated_at=now_iso,
         repo_root=str(repo_root),
         base_branch=base_branch,
+        base_commit=base_commit,
         branch=branch,
         worktree=worktree,
+        isolation_mode=isolation_mode,
         docs_status="pending",
     )
     return TaskDocument(metadata=metadata, title=title, sections=default_sections())

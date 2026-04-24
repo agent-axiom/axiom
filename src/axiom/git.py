@@ -10,8 +10,10 @@ from .models import TaskDocument
 @dataclass(frozen=True)
 class WorkspacePlan:
     base_branch: str
+    base_commit: str
     branch: str
     worktree: str
+    isolation_mode: str
     bootstrap_reason: str = ""
 
 
@@ -53,6 +55,15 @@ def current_branch(repo_root: Path) -> str:
     return branch or "main"
 
 
+def current_commit(repo_root: Path) -> str:
+    if not has_head_commit(repo_root):
+        return ""
+    result = _run_git(repo_root, ["rev-parse", "HEAD"])
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
 def choose_worktree_dir(repo_root: Path) -> Path:
     hidden = repo_root / ".worktrees"
     visible = repo_root / "worktrees"
@@ -70,21 +81,27 @@ def plan_workspace(repo_root: Path, task_id: str, slug: str) -> WorkspacePlan:
     if not is_git_repo(repo_root):
         return WorkspacePlan(
             base_branch="main",
+            base_commit="",
             branch=branch,
             worktree=str(repo_root),
+            isolation_mode="degraded",
             bootstrap_reason="repository is not a git worktree",
         )
     if not has_head_commit(repo_root):
         return WorkspacePlan(
             base_branch=current_branch(repo_root),
+            base_commit="",
             branch=branch,
             worktree=str(repo_root),
+            isolation_mode="degraded",
             bootstrap_reason="repository has no initial commit; worktree creation deferred",
         )
     return WorkspacePlan(
         base_branch=current_branch(repo_root),
+        base_commit=current_commit(repo_root),
         branch=branch,
         worktree=str(worktree),
+        isolation_mode="worktree",
     )
 
 
@@ -121,7 +138,8 @@ def provision_workspace(repo_root: Path, task_id: str, slug: str) -> WorkspacePl
         raise GitWorkspaceError(f"worktree path already exists and is not a git worktree: {worktree}")
 
     worktree.parent.mkdir(parents=True, exist_ok=True)
-    result = _run_git(repo_root, ["worktree", "add", "-b", workspace.branch, str(worktree), workspace.base_branch])
+    base_ref = workspace.base_commit or workspace.base_branch
+    result = _run_git(repo_root, ["worktree", "add", "-b", workspace.branch, str(worktree), base_ref])
     if result.returncode != 0:
         raise GitWorkspaceError(result.stderr.strip() or "git worktree add failed")
     return workspace
@@ -171,10 +189,33 @@ def task_workspace(task: TaskDocument) -> Path:
     return Path(task.metadata.worktree).resolve()
 
 
+def task_base_ref(task: TaskDocument) -> str:
+    return task.metadata.base_commit or task.metadata.base_branch
+
+
 def task_changed_files(task: TaskDocument) -> list[str]:
-    return changed_files_against_base(task_workspace(task), task.metadata.base_branch)
+    return changed_files_against_base(task_workspace(task), task_base_ref(task))
 
 
 def task_diff(task: TaskDocument) -> str:
-    diff = diff_against_base(task_workspace(task), task.metadata.base_branch)
+    diff = diff_against_base(task_workspace(task), task_base_ref(task))
     return "No task-scoped diff." if diff == "No local diff." else diff
+
+
+def remove_task_worktree(task: TaskDocument, *, force: bool = False) -> tuple[bool, str]:
+    repo_root = Path(task.metadata.repo_root)
+    worktree = task_workspace(task)
+    if task.metadata.isolation_mode != "worktree":
+        return False, "task is not using a managed git worktree"
+    if not is_git_repo(repo_root):
+        return False, "repository is not a git worktree"
+    if not worktree.exists():
+        return True, "worktree already removed"
+    args = ["worktree", "remove"]
+    if force:
+        args.append("--force")
+    args.append(str(worktree))
+    result = _run_git(repo_root, args)
+    if result.returncode != 0:
+        return False, result.stderr.strip() or "git worktree remove failed"
+    return True, "worktree removed"

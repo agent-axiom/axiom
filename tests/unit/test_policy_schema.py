@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from axiom.artifacts import latest_phase_result
 from axiom.approvals import approve_command
-from axiom.phases import run_verify
+from axiom.phases import run_design, run_execute, run_plan, run_verify
 from axiom.schema import SchemaValidationError, validate_phase_payload
 from axiom.task_file import create_task, load_task
 
@@ -20,6 +20,21 @@ class PolicySchemaTest(unittest.TestCase):
     def test_validate_phase_payload_rejects_missing_required_fields(self) -> None:
         with self.assertRaises(SchemaValidationError):
             validate_phase_payload("plan", {"summary": "too small"})
+
+    def test_all_persisted_phase_schemas_are_present_and_enforced(self) -> None:
+        validate_phase_payload("design", {"summary": "ok", "repo_anchors": []})
+        validate_phase_payload(
+            "execute",
+            {
+                "summary": "ok",
+                "changed_files": [],
+                "pre_changed_files": [],
+                "new_changed_files": [],
+            },
+        )
+        validate_phase_payload("finish", {"outcome": "blocked", "summary": "not ready"})
+        with self.assertRaises(SchemaValidationError):
+            validate_phase_payload("adapter-request", {"protocol": "wrong"})
 
     def test_verify_blocks_dangerous_git_command_before_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -30,6 +45,9 @@ class PolicySchemaTest(unittest.TestCase):
                 kind="feature",
                 now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
             )
+            run_design(task_path)
+            run_plan(task_path)
+            run_execute(task_path)
             run_verify(
                 task_path,
                 commands=["git reset --hard"],
@@ -53,6 +71,9 @@ class PolicySchemaTest(unittest.TestCase):
                 kind="feature",
                 now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
             )
+            run_design(task_path)
+            run_plan(task_path)
+            run_execute(task_path)
             run_verify(
                 task_path,
                 commands=["pip install requests"],
@@ -82,6 +103,9 @@ class PolicySchemaTest(unittest.TestCase):
                 kind="feature",
                 now=datetime(2026, 4, 24, 12, 0, tzinfo=timezone.utc),
             )
+            run_design(task_path)
+            run_plan(task_path)
+            run_execute(task_path)
             task = load_task(task_path)
             run_verify(
                 task_path,

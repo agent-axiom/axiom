@@ -40,6 +40,22 @@ class BootstrapCLITest(unittest.TestCase):
         self.assertEqual(namespace.timeout_seconds, 0.5)
         self.assertEqual(namespace.max_output_chars, 64)
 
+    def test_verify_accepts_policy_profile_and_allowlist(self) -> None:
+        parser = build_parser()
+        namespace = parser.parse_args(
+            [
+                "run",
+                "verify",
+                "AX-1",
+                "--policy-profile",
+                "strict",
+                "--policy-allow",
+                "python3 -c \"print('ok')\"",
+            ]
+        )
+        self.assertEqual(namespace.policy_profile, "strict")
+        self.assertEqual(namespace.policy_allow, ["python3 -c \"print('ok')\""])
+
     def test_worktree_commands_parse(self) -> None:
         parser = build_parser()
         namespace = parser.parse_args(["worktree", "path", "AX-1"])

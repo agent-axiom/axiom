@@ -138,6 +138,29 @@ class GitRuntimeTest(unittest.TestCase):
             self.assertIn("app.py", diff_output)
             self.assertNotIn("dirty source checkout", diff_output)
 
+    def test_diff_command_includes_untracked_file_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            _init_repo(repo_root)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="New file evidence",
+                kind="feature",
+                now=datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc),
+            )
+            task = load_task(task_path)
+            worktree = Path(task.metadata.worktree)
+            (worktree / "new_feature.py").write_text("print('new evidence')\n", encoding="utf-8")
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(["--repo-root", str(repo_root), "diff", str(task_path)])
+
+            diff_output = stdout.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("new_feature.py", diff_output)
+            self.assertIn("+print('new evidence')", diff_output)
+
     def test_execute_records_changed_files_from_task_worktree_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)

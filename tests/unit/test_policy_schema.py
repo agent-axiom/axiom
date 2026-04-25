@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from axiom.artifacts import latest_phase_result
 from axiom.approvals import approve_command
 from axiom.phases import run_design, run_execute, run_plan, run_verify
+from axiom.policy import evaluate_command
 from axiom.schema import SchemaValidationError, validate_phase_payload
 from axiom.task_file import create_task, load_task
 
@@ -87,6 +88,28 @@ class PolicySchemaTest(unittest.TestCase):
         self.assertEqual(result["automated_checks"][0]["status"], "blocked")
         self.assertEqual(result["automated_checks"][0]["policy"], "escalate")
         self.assertIn("dependency changes require explicit human approval", result["automated_checks"][0]["stderr"])
+
+    def test_strict_policy_blocks_ad_hoc_python_command(self) -> None:
+        decision = evaluate_command(f"{sys.executable} -c \"print('ok')\"", profile="strict")
+
+        self.assertEqual(decision.action, "deny")
+        self.assertIn("strict policy", decision.reason)
+
+    def test_strict_policy_allows_explicit_command_allowlist(self) -> None:
+        command = f"{sys.executable} -c \"print('ok')\""
+        decision = evaluate_command(command, profile="strict", command_allowlist=[command])
+
+        self.assertEqual(decision.action, "allow")
+
+    def test_strict_policy_allows_known_test_runner(self) -> None:
+        decision = evaluate_command(f"{sys.executable} -m unittest discover -s tests/unit -v", profile="strict")
+
+        self.assertEqual(decision.action, "allow")
+
+    def test_permissive_policy_still_denies_destructive_commands(self) -> None:
+        decision = evaluate_command("rm -rf important", profile="permissive")
+
+        self.assertEqual(decision.action, "deny")
 
     def test_verify_runs_escalated_command_after_persisted_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

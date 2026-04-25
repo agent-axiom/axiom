@@ -25,3 +25,32 @@ jobs:
 
       - name: Run unit suite
         run: make test
+
+  installed-wheel:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Install wheel into clean venv
+        run: |
+          python -m venv .venv-wheel-smoke
+          .venv-wheel-smoke/bin/python -m pip install dist/*.whl
+
+      - name: Run installed CLI smoke
+        run: >
+          python scripts/installed_wheel_smoke.py
+          --axiom-bin .venv-wheel-smoke/bin/axiom
+          --python-bin .venv-wheel-smoke/bin/python

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AXIOM Design Result",
+  "type": "object",
+  "required": ["summary", "repo_anchors"],
+  "properties": {
+    "summary": {"type": "string"},
+    "repo_anchors": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

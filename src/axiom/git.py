@@ -159,6 +159,34 @@ def repo_changed_files(repo_root: Path) -> list[str]:
     return files
 
 
+def _untracked_files(repo_root: Path) -> list[str]:
+    if not is_git_repo(repo_root):
+        return []
+    result = _run_git(repo_root, ["status", "--porcelain", "--untracked-files=all"])
+    if result.returncode != 0:
+        return []
+    files: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line.startswith("?? "):
+            continue
+        file_name = line[3:].strip()
+        if file_name:
+            files.append(file_name)
+    return sorted(files)
+
+
+def _untracked_diff(repo_root: Path) -> str:
+    chunks: list[str] = []
+    for file_name in _untracked_files(repo_root):
+        path = repo_root / file_name
+        if not path.is_file():
+            continue
+        result = _run_git(repo_root, ["diff", "--no-index", "--", "/dev/null", file_name])
+        if result.stdout.strip():
+            chunks.append(result.stdout.strip())
+    return "\n\n".join(chunks)
+
+
 def changed_files_against_base(repo_root: Path, base_ref: str) -> list[str]:
     if not is_git_repo(repo_root):
         return []
@@ -181,7 +209,7 @@ def diff_against_base(repo_root: Path, base_ref: str | None = None) -> str:
     result = _run_git(repo_root, args)
     if result.returncode != 0:
         return result.stderr.strip() or "git diff failed"
-    output = result.stdout.strip()
+    output = "\n\n".join(item for item in [result.stdout.strip(), _untracked_diff(repo_root)] if item)
     return output or "No local diff."
 
 

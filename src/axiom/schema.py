@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,49 @@ class SchemaValidationError(ValueError):
 _SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schemas"
 
 _FALLBACK_SCHEMAS: dict[str, dict[str, Any]] = {
+    "adapter-request": {
+        "type": "object",
+        "required": [
+            "protocol",
+            "phase",
+            "task",
+            "task_path",
+            "repo_root",
+            "workspace",
+            "base_branch",
+            "base_commit",
+            "branch",
+            "isolation_mode",
+            "sections",
+            "latest_artifacts",
+            "diff",
+        ],
+        "properties": {
+            "protocol": {"const": "axiom.adapter.v1"},
+            "phase": {"enum": ["plan", "execute"]},
+            "task": {
+                "type": "object",
+                "required": ["id", "title", "kind", "status", "risk"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "status": {"type": "string"},
+                    "risk": {"type": "string"},
+                },
+            },
+            "task_path": {"type": "string"},
+            "repo_root": {"type": "string"},
+            "workspace": {"type": "string"},
+            "base_branch": {"type": "string"},
+            "base_commit": {"type": "string"},
+            "branch": {"type": "string"},
+            "isolation_mode": {"enum": ["worktree", "degraded"]},
+            "sections": {"type": "object"},
+            "latest_artifacts": {"type": "object"},
+            "diff": {"type": "string"},
+        },
+    },
     "design": {
         "type": "object",
         "required": ["summary", "repo_anchors"],
@@ -140,7 +184,20 @@ _FALLBACK_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
+def _load_packaged_schema(phase: str) -> dict[str, Any] | None:
+    try:
+        schema_path = resources.files("axiom").joinpath("schemas", f"{phase}.schema.json")
+        if schema_path.is_file():
+            return json.loads(schema_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ModuleNotFoundError, json.JSONDecodeError):
+        return None
+    return None
+
+
 def _load_schema(phase: str) -> dict[str, Any] | None:
+    packaged_schema = _load_packaged_schema(phase)
+    if packaged_schema is not None:
+        return packaged_schema
     schema_path = _SCHEMA_ROOT / f"{phase}.schema.json"
     if schema_path.exists():
         return json.loads(schema_path.read_text(encoding="utf-8"))

@@ -65,6 +65,29 @@ class LifecycleFlowTest(unittest.TestCase):
         self.assertEqual(decision["from_status"], "draft")
         self.assertEqual(decision["to_status"], "plan.passed")
 
+    def test_successful_forced_phase_clears_stale_blocked_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Forced transition cleanup",
+                kind="feature",
+                now=datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc),
+            )
+
+            with self.assertRaises(PhaseTransitionError):
+                run_plan(task_path)
+            blocked = load_task(task_path)
+            self.assertIn("plan transition blocked", blocked.metadata.blocked_reason)
+
+            run_plan(task_path, force=True)
+            task = load_task(task_path)
+            decision = latest_phase_result(repo_root, task.metadata.id, "decision")
+
+        self.assertEqual(task.metadata.status, "plan.passed")
+        self.assertEqual(task.metadata.blocked_reason, "")
+        self.assertEqual(decision["outcome"], "forced")
+
     def test_finish_blocks_until_verify_and_review_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)

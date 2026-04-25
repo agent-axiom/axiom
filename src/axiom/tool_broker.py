@@ -44,8 +44,10 @@ def run_command(
     worktree: str = "",
     timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
+    policy_profile: str = "standard",
+    command_allowlist: list[str] | None = None,
 ) -> CommandReceipt:
-    decision = evaluate_command(command)
+    decision = evaluate_command(command, profile=policy_profile, command_allowlist=command_allowlist or [])
     try:
         argv = shlex.split(command)
     except ValueError:

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AXIOM Finish Result",
+  "type": "object",
+  "required": ["outcome", "summary"],
+  "properties": {
+    "outcome": {"enum": ["passed", "blocked"]},
+    "summary": {"type": "string"}
+  }
+}

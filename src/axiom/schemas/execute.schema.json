@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AXIOM Execute Result",
+  "type": "object",
+  "required": ["summary", "changed_files", "pre_changed_files", "new_changed_files"],
+  "properties": {
+    "outcome": {"enum": ["passed", "failed", "blocked"]},
+    "summary": {"type": "string"},
+    "changed_files": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "pre_changed_files": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "new_changed_files": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "failures": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "adapter": {"type": "object"}
+  }
+}

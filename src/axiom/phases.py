@@ -260,6 +260,7 @@ def run_design(task_path: Path, *, force: bool = False) -> Path:
             "Design": design,
             "Repo Anchors": anchors,
         },
+        metadata_updates={"blocked_reason": ""},
     )
     return artifact_path
 
@@ -328,6 +329,7 @@ def run_plan(task_path: Path, *, adapter_command: str | None = None, force: bool
         task_path,
         status="plan.passed",
         section_updates={"Plan": _render_plan_markdown(payload)},
+        metadata_updates={"blocked_reason": ""},
     )
     return artifact_path
 
@@ -395,6 +397,7 @@ def run_execute(
         task_path,
         status="execute.passed",
         section_updates={"Execution Log": _render_execution_markdown(payload)},
+        metadata_updates={"blocked_reason": ""},
     )
     return artifact_path
 
@@ -407,6 +410,8 @@ def run_verify(
     manual_smoke: list[dict[str, str]],
     timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
+    policy_profile: str = "standard",
+    command_allowlist: list[str] | None = None,
     force: bool = False,
 ) -> Path:
     _enforce_phase_transition(task_path=task_path, phase="verify", next_status="verify.passed", force=force)
@@ -423,6 +428,8 @@ def run_verify(
             worktree=task.metadata.worktree,
             timeout_seconds=timeout_seconds,
             max_output_chars=max_output_chars,
+            policy_profile=policy_profile,
+            command_allowlist=command_allowlist or [],
         ).__dict__
         for command in commands
     ]
@@ -435,6 +442,8 @@ def run_verify(
             worktree=task.metadata.worktree,
             timeout_seconds=timeout_seconds,
             max_output_chars=max_output_chars,
+            policy_profile=policy_profile,
+            command_allowlist=command_allowlist or [],
         ).__dict__
         for command in negative_commands
     ]

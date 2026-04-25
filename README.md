@@ -18,6 +18,8 @@ This first slice includes:
 
 This slice is intentionally deterministic and stdlib-only. It can run without an LLM, but it now has a real command-adapter seam for local models and host agents that speak JSON over stdin/stdout.
 
+Runtime schemas are packaged inside the Python package and loaded through package resources. The top-level `schemas/` directory remains the human-readable contract source in the repository; tests ensure packaged copies stay in sync.
+
 ## What The Binary Actually Does
 
 The `axiom` binary is a local workflow engine.
@@ -349,17 +351,33 @@ Review is contract-aware for git tasks. The latest plan write scope is compared 
 
 Verification commands are run through the tool broker with policy checks, timeouts, and stdout/stderr capture limits. Hung commands produce failed receipts with `exit_code=-1`.
 
+The command policy is a guardrail, not a sandbox. It blocks known-dangerous direct commands and shell control operators, but it cannot prevent a trusted interpreter command from doing arbitrary work. For tighter environments, use strict mode:
+
+```bash
+bin/axiom --repo-root "$(pwd)" run verify "$TASK_ID" \
+  --policy-profile strict \
+  --check "python3 -m unittest discover -s tests/unit -v" \
+  --manual-smoke "smoke-1:passed:Observed expected behavior"
+```
+
+Policy profiles:
+- `standard`: default guardrails with escalation for dependency changes and sensitive git operations
+- `strict`: only known test runners or commands passed through `--policy-allow`
+- `permissive`: allows escalation-class commands but still denies destructive and shell-control patterns
+
 ## Current Bootstrap Limitation
 
 This repository now proves the load-bearing local workflow and release transparency pieces first:
 - task file lifecycle
 - real git worktree provisioning for repositories with an initial commit
 - task-scoped diff and changed-file tracking against immutable `base_commit`
+- untracked new-file content in task diff evidence
 - command-adapter protocol for local model shims and host agents
 - persisted adapter failure artifacts
 - strict phase transition enforcement with explicit `--force` override logging
 - persisted artifacts
 - verification and review gates
+- installed-wheel smoke coverage in CI and release workflows
 - deterministic local CLI control
 - embedded build metadata
 - GitHub Releases and GitHub Actions based release verification assets
@@ -400,5 +418,6 @@ Non-git repositories and git repositories without an initial commit run in `isol
 - `.axiom/artifacts/shared/`: persisted phase outputs
 - `scripts/`: release metadata generation helpers
 - `examples/adapters/`: minimal command adapters for protocol testing
+- `src/axiom/schemas/`: packaged runtime schemas
 - `.github/workflows/`: test and release workflows
 - `tests/unit/`: bootstrap verification suite

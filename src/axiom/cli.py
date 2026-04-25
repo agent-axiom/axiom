@@ -83,6 +83,8 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser.add_argument("--manual-smoke", action="append", default=[])
     verify_parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_COMMAND_TIMEOUT_SECONDS)
     verify_parser.add_argument("--max-output-chars", type=int, default=DEFAULT_MAX_OUTPUT_CHARS)
+    verify_parser.add_argument("--policy-profile", choices=["standard", "strict", "permissive"], default="standard")
+    verify_parser.add_argument("--policy-allow", action="append", default=[])
     verify_parser.add_argument("--force", action="store_true")
 
     review_parser = run_subparsers.add_parser("review")
@@ -257,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
                     manual_smoke=manual_smoke,
                     timeout_seconds=args.timeout_seconds,
                     max_output_chars=args.max_output_chars,
+                    policy_profile=args.policy_profile,
+                    command_allowlist=args.policy_allow,
                     force=args.force,
                 )
             elif args.phase == "review":

@@ -112,6 +112,69 @@ class PolicySchemaTest(unittest.TestCase):
 
         self.assertEqual(decision.action, "allow")
 
+    def test_strict_verify_uses_repo_policy_allowlist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Repo policy allowlist",
+                kind="feature",
+                now=datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc),
+            )
+            command = f"{sys.executable} -c 'print(123)'"
+            (repo_root / ".axiom" / "policy.yaml").write_text(
+                f"verify:\n  strict_allow:\n    - {command}\n",
+                encoding="utf-8",
+            )
+
+            run_design(task_path)
+            run_plan(task_path)
+            run_execute(task_path)
+            run_verify(
+                task_path,
+                commands=[command],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "policy config smoke"}],
+                policy_profile="strict",
+            )
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "verify")
+
+        self.assertEqual(result["outcome"], "passed")
+        self.assertEqual(result["automated_checks"][0]["status"], "passed")
+        self.assertIn("strict policy allowlist", result["automated_checks"][0]["policy_reason"])
+
+    def test_strict_verify_blocks_invalid_repo_policy_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Invalid repo policy",
+                kind="feature",
+                now=datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc),
+            )
+            (repo_root / ".axiom" / "policy.yaml").write_text(
+                "verify:\n  strict_allow:\n   - python3 -c 'print(123)'\n",
+                encoding="utf-8",
+            )
+
+            run_design(task_path)
+            run_plan(task_path)
+            run_execute(task_path)
+            run_verify(
+                task_path,
+                commands=["python3 -c 'print(123)'"],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "policy config smoke"}],
+                policy_profile="strict",
+            )
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "verify")
+
+        self.assertEqual(result["outcome"], "blocked")
+        self.assertEqual(task.metadata.status, "verify.blocked")
+        self.assertIn("verify.strict_allow items must use four-space indentation", result["failures"][0])
+
     def test_strict_policy_allows_known_test_runner(self) -> None:
         decision = evaluate_command(f"{sys.executable} -m unittest discover -s tests/unit -v", profile="strict")
 

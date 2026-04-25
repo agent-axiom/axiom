@@ -372,8 +372,18 @@ bin/axiom --repo-root "$(pwd)" run verify "$TASK_ID" \
 
 Policy profiles:
 - `standard`: default guardrails with escalation for dependency changes and sensitive git operations
-- `strict`: only known test runners or commands passed through `--policy-allow`
+- `strict`: only known test runners, commands passed through `--policy-allow`, or commands listed in `.axiom/policy.yaml`
 - `permissive`: allows escalation-class commands but still denies destructive and shell-control patterns
+
+Repo-local strict allowlists use AXIOM's intentionally small policy YAML subset:
+
+```yaml
+verify:
+  strict_allow:
+    - python3 -m unittest discover -s tests/unit -v
+```
+
+Malformed policy files block strict verification instead of being ignored.
 
 ## Current Bootstrap Limitation
 
@@ -434,7 +444,7 @@ bin/axiom --repo-root "$(pwd)" doctor
 bin/axiom --repo-root "$(pwd)" doctor --json
 ```
 
-`doctor` checks Python version, schema availability, git/HEAD/worktree readiness, write permissions, adapter trust environment, and policy profiles.
+`doctor` checks Python version, schema availability, git/HEAD/worktree readiness, write permissions, adapter trust environment, policy profiles, and `.axiom/policy.yaml`.
 
 Non-git repositories and git repositories without an initial commit run in `isolation_mode: degraded`. In degraded mode, review requires manual smoke evidence before it can pass.
 

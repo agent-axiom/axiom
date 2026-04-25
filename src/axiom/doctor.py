@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .git import choose_worktree_dir, has_head_commit, is_git_repo
+from .policy_config import PolicyConfigError, load_policy_config
 from .schema import _load_schema
 
 
@@ -136,6 +137,28 @@ def run_doctor(repo_root: Path) -> dict[str, Any]:
             profiles=["standard", "strict", "permissive"],
         )
     )
+
+    try:
+        policy_config = load_policy_config(repo_root)
+        policy_config_exists = policy_config.path.exists()
+        checks.append(
+            _check(
+                "repo policy config",
+                "pass",
+                ".axiom/policy.yaml loaded" if policy_config_exists else "no .axiom/policy.yaml configured",
+                path=str(policy_config.path),
+                configured=policy_config_exists,
+                verify_strict_allow_count=len(policy_config.verify_strict_allow),
+            )
+        )
+    except PolicyConfigError as exc:
+        checks.append(
+            _check(
+                "repo policy config",
+                "fail",
+                str(exc),
+            )
+        )
 
     statuses = [check.status for check in checks]
     overall = "fail" if "fail" in statuses else "warn" if "warn" in statuses else "pass"

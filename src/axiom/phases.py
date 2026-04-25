@@ -6,6 +6,7 @@ from .adapters import AdapterError, build_adapter_request, invoke_command_adapte
 from .artifacts import latest_phase_result, write_phase_result
 from .git import is_git_repo, task_changed_files, task_diff, task_workspace
 from .models import FinishDecision
+from .policy_config import PolicyConfigError, load_policy_config
 from .schema import SchemaValidationError, validate_phase_payload
 from .state_machine import can_transition
 from .task_file import load_task, repo_root_for, update_task
@@ -418,6 +419,29 @@ def run_verify(
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
     workspace = task_workspace(task)
+    effective_command_allowlist = list(command_allowlist or [])
+    if policy_profile == "strict":
+        try:
+            effective_command_allowlist.extend(load_policy_config(repo_root).verify_strict_allow)
+        except PolicyConfigError as exc:
+            payload = {
+                "outcome": "blocked",
+                "summary": "Verification blocked by invalid policy config.",
+                "automated_checks": [],
+                "negative_checks": [],
+                "manual_smoke": manual_smoke,
+                "failures": [str(exc)],
+            }
+            artifact_path = _write_validated_phase_result(
+                repo_root=repo_root, task_id=task.metadata.id, phase="verify", payload=payload
+            )
+            update_task(
+                task_path,
+                status="verify.blocked",
+                section_updates={"Verification": _render_verify_markdown(payload)},
+                metadata_updates={"blocked_reason": payload["summary"]},
+            )
+            return artifact_path
 
     automated_checks = [
         run_command(
@@ -429,7 +453,7 @@ def run_verify(
             timeout_seconds=timeout_seconds,
             max_output_chars=max_output_chars,
             policy_profile=policy_profile,
-            command_allowlist=command_allowlist or [],
+            command_allowlist=effective_command_allowlist,
         ).__dict__
         for command in commands
     ]
@@ -443,7 +467,7 @@ def run_verify(
             timeout_seconds=timeout_seconds,
             max_output_chars=max_output_chars,
             policy_profile=policy_profile,
-            command_allowlist=command_allowlist or [],
+            command_allowlist=effective_command_allowlist,
         ).__dict__
         for command in negative_commands
     ]

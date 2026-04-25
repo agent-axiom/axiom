@@ -22,7 +22,7 @@
       "const": "axiom.adapter.v1"
     },
     "phase": {
-      "enum": ["plan", "execute"]
+      "enum": ["plan", "execute", "review"]
     },
     "task": {
       "type": "object",

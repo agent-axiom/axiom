@@ -11,7 +11,7 @@ This first slice includes:
 - first-class git worktree provisioning for git repositories with an initial commit
 - immutable `base_commit` tracking for task-scoped diffs
 - structured JSON artifacts under `.axiom/artifacts/shared/`
-- a lifecycle CLI with `make`, `resume`, `list`, `show`, `diff`, `run <phase>`, `finish`, `adapter`, `policy`, `worktree`, `cleanup`, and `version`
+- a lifecycle CLI with `make`, `resume`, `list`, `show`, `diff`, `run <phase>`, `finish`, `adapter`, `policy`, `worktree`, `cleanup`, `doctor`, and `version`
 - an explicit command-adapter protocol for local model shims and host coding agents
 - mandatory verification and review gates before completion
 - release metadata files and GitHub Actions workflows for transparent releases
@@ -319,6 +319,7 @@ bin/axiom --repo-root "$(pwd)" run verify "$TASK_ID" --check "python3 -m unittes
 bin/axiom --repo-root "$(pwd)" run review "$TASK_ID"
 bin/axiom --repo-root "$(pwd)" finish "$TASK_ID"
 bin/axiom --repo-root "$(pwd)" worktree path "$TASK_ID"
+bin/axiom --repo-root "$(pwd)" doctor
 bin/axiom version --verbose
 ```
 
@@ -348,6 +349,15 @@ bin/axiom --repo-root "$(pwd)" policy approvals
 ```
 
 Review is contract-aware for git tasks. The latest plan write scope is compared against the task-scoped changed files, and the review artifact records `planned_scope`, `actual_scope`, and `scope_mismatches`.
+
+Optional review adapters are supported as an additional semantic review layer:
+
+```bash
+bin/axiom --repo-root "$(pwd)" run review "$TASK_ID" \
+  --adapter-command "python3 /opt/axiom-adapters/local_reviewer.py"
+```
+
+The review adapter cannot bypass deterministic gates. If verification failed, docs are unresolved, no task diff exists, or changed files escape the planned write scope, AXIOM returns `changes_requested` or `blocked` before any semantic adapter can turn the review into a pass.
 
 Verification commands are run through the tool broker with policy checks, timeouts, and stdout/stderr capture limits. Hung commands produce failed receipts with `exit_code=-1`.
 
@@ -389,7 +399,7 @@ It still does not ship:
 - reproducible builds
 - native macOS signing or notarization
 
-The current adapter support is deliberately narrow: AXIOM can invoke an explicit local command adapter for `run plan` and `run execute`, passing a structured JSON request on stdin and reading JSON from stdout. This is enough to integrate a local model shim or a host-agent wrapper without making AXIOM depend on a single provider.
+The current adapter support is deliberately narrow: AXIOM can invoke an explicit local command adapter for `run plan`, `run execute`, and optional semantic `run review`, passing a structured JSON request on stdin and reading JSON from stdout. This is enough to integrate a local model shim or a host-agent wrapper without making AXIOM depend on a single provider.
 
 Example:
 
@@ -399,6 +409,9 @@ bin/axiom --repo-root "$(pwd)" run plan "$TASK_ID" \
 
 bin/axiom --repo-root "$(pwd)" run execute "$TASK_ID" \
   --adapter-command "python3 /opt/axiom-adapters/local_executor.py"
+
+bin/axiom --repo-root "$(pwd)" run review "$TASK_ID" \
+  --adapter-command "python3 /opt/axiom-adapters/local_reviewer.py"
 ```
 
 Worktree lifecycle helpers:
@@ -406,8 +419,21 @@ Worktree lifecycle helpers:
 ```bash
 bin/axiom --repo-root "$(pwd)" worktree list
 bin/axiom --repo-root "$(pwd)" worktree path "$TASK_ID"
+bin/axiom --repo-root "$(pwd)" cleanup "$TASK_ID" --dry-run
 bin/axiom --repo-root "$(pwd)" cleanup "$TASK_ID" --force
+bin/axiom --repo-root "$(pwd)" cleanup "$TASK_ID" --only-if-done --force --delete-branch
 ```
+
+Default cleanup removes only the managed worktree and keeps the task branch. `--delete-branch` uses safe `git branch -d`; unmerged branches are not force-deleted.
+
+Runtime diagnostics:
+
+```bash
+bin/axiom --repo-root "$(pwd)" doctor
+bin/axiom --repo-root "$(pwd)" doctor --json
+```
+
+`doctor` checks Python version, schema availability, git/HEAD/worktree readiness, write permissions, adapter trust environment, and policy profiles.
 
 Non-git repositories and git repositories without an initial commit run in `isolation_mode: degraded`. In degraded mode, review requires manual smoke evidence before it can pass.
 

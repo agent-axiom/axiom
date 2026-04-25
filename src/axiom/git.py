@@ -20,6 +20,14 @@ class WorkspacePlan:
     bootstrap_reason: str = ""
 
 
+@dataclass(frozen=True)
+class CleanupResult:
+    ok: bool
+    messages: list[str]
+    worktree_removed: bool = False
+    branch_deleted: bool = False
+
+
 def _run_git(repo_root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
@@ -267,20 +275,78 @@ def task_diff(task: TaskDocument) -> str:
     return "No task-scoped diff." if diff == "No local diff." else diff
 
 
-def remove_task_worktree(task: TaskDocument, *, force: bool = False) -> tuple[bool, str]:
+def _branch_exists(repo_root: Path, branch: str) -> bool:
+    if not branch:
+        return False
+    result = _run_git(repo_root, ["show-ref", "--verify", f"refs/heads/{branch}"])
+    return result.returncode == 0
+
+
+def cleanup_task_worktree(
+    task: TaskDocument,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    only_if_done: bool = False,
+    delete_branch: bool = False,
+) -> CleanupResult:
     repo_root = Path(task.metadata.repo_root)
     worktree = task_workspace(task)
+    branch = task.metadata.branch
+    messages: list[str] = []
+
+    if only_if_done and task.metadata.status != "done":
+        return CleanupResult(False, [f"task is not done: {task.metadata.status}"])
     if task.metadata.isolation_mode != "worktree":
-        return False, "task is not using a managed git worktree"
+        return CleanupResult(False, ["task is not using a managed git worktree"])
     if not is_git_repo(repo_root):
-        return False, "repository is not a git worktree"
-    if not worktree.exists():
-        return True, "worktree already removed"
-    args = ["worktree", "remove"]
-    if force:
-        args.append("--force")
-    args.append(str(worktree))
-    result = _run_git(repo_root, args)
-    if result.returncode != 0:
-        return False, result.stderr.strip() or "git worktree remove failed"
-    return True, "worktree removed"
+        return CleanupResult(False, ["repository is not a git worktree"])
+
+    if dry_run:
+        if worktree.exists():
+            messages.append(f"would remove worktree: {worktree}")
+        else:
+            messages.append(f"worktree already removed: {worktree}")
+        if delete_branch:
+            messages.append(f"would delete branch if merged: {branch}")
+        else:
+            messages.append(f"would keep branch: {branch}")
+        return CleanupResult(True, messages)
+
+    if not force:
+        return CleanupResult(False, ["cleanup requires --force unless --dry-run is used"])
+
+    worktree_removed = False
+    if worktree.exists():
+        args = ["worktree", "remove"]
+        if force:
+            args.append("--force")
+        args.append(str(worktree))
+        result = _run_git(repo_root, args)
+        if result.returncode != 0:
+            return CleanupResult(False, [result.stderr.strip() or "git worktree remove failed"])
+        worktree_removed = True
+        messages.append(f"worktree removed: {worktree}")
+    else:
+        messages.append(f"worktree already removed: {worktree}")
+
+    branch_deleted = False
+    if delete_branch:
+        if not _branch_exists(repo_root, branch):
+            messages.append(f"branch already absent: {branch}")
+        else:
+            result = _run_git(repo_root, ["branch", "-d", branch])
+            if result.returncode != 0:
+                messages.append(result.stderr.strip() or f"git branch -d {branch} failed")
+                return CleanupResult(False, messages, worktree_removed=worktree_removed)
+            branch_deleted = True
+            messages.append(f"branch deleted: {branch}")
+    else:
+        messages.append(f"branch kept: {branch}")
+
+    return CleanupResult(True, messages, worktree_removed=worktree_removed, branch_deleted=branch_deleted)
+
+
+def remove_task_worktree(task: TaskDocument, *, force: bool = False) -> tuple[bool, str]:
+    result = cleanup_task_worktree(task, force=force)
+    return result.ok, "\n".join(result.messages)

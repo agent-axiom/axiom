@@ -25,6 +25,7 @@ axiom.adapter.v1
 Current integration points:
 - `axiom run plan <task> --adapter-command "..."`
 - `axiom run execute <task> --adapter-command "..."`
+- `axiom run review <task> --adapter-command "..."`
 - `axiom adapter list`
 
 Adapter request shape:
@@ -65,6 +66,8 @@ For `execute`, the adapter may edit files in the task worktree and should return
 
 AXIOM records the adapter receipt, changed files before execution, changed files after execution, and newly changed files.
 
+For `review`, the adapter returns `schemas/review.schema.json`. Review adapters are semantic add-ons only: deterministic AXIOM gates for verification, docs, task diff, and plan write scope still run first and cannot be bypassed by an adapter pass.
+
 Full protocol spec:
 - `docs/ADAPTER_PROTOCOL.md`
 
@@ -73,9 +76,17 @@ Reference adapters:
 - `examples/adapters/file_write_execute_adapter.py`
 - `examples/adapters/openai_compatible_plan_adapter.py`
 
+The OpenAI-compatible plan adapter supports:
+- `AXIOM_OPENAI_COMPAT_BASE_URL`
+- `AXIOM_OPENAI_COMPAT_MODEL`
+- `AXIOM_OPENAI_COMPAT_API_KEY`
+- `AXIOM_OPENAI_COMPAT_TIMEOUT`
+- `AXIOM_OPENAI_COMPAT_RETRIES`
+- `AXIOM_OPENAI_COMPAT_RETRY_DELAY`
+
 Still deferred:
 - built-in vendor-specific model adapters
-- production-grade local model server clients
+- production-grade local model server clients beyond the reference OpenAI-compatible shim
 - long-running agent sessions
 - streaming adapter output
 - automatic approval of escalated tools

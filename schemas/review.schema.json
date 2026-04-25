@@ -29,7 +29,7 @@
       }
     },
     "next_phase": {
-      "enum": ["execute", "plan", "design", "verify", "done"]
+      "enum": ["execute", "plan", "design", "verify", "review", "done"]
     },
     "changed_files": {
       "type": "array",
@@ -60,6 +60,7 @@
     },
     "isolation_mode": {
       "enum": ["worktree", "degraded"]
-    }
+    },
+    "adapter": {"type": "object"}
   }
 }

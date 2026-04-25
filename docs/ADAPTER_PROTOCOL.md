@@ -15,6 +15,7 @@ AXIOM invokes adapters explicitly through:
 ```bash
 axiom run plan <task> --adapter-command "python3 adapter.py"
 axiom run execute <task> --adapter-command "python3 adapter.py"
+axiom run review <task> --adapter-command "python3 adapter.py"
 ```
 
 Adapters run in the task worktree. They must not assume the source checkout is the active workspace.
@@ -29,7 +30,7 @@ Every adapter receives one JSON object on stdin matching `schemas/adapter-reques
 
 Important fields:
 - `protocol`: always `axiom.adapter.v1`
-- `phase`: `plan` or `execute`
+- `phase`: `plan`, `execute`, or `review`
 - `task`: task metadata
 - `task_path`: markdown task file path
 - `repo_root`: target repository root
@@ -84,6 +85,30 @@ AXIOM records:
 - changed files after execution
 - newly changed files
 
+## Review Response
+
+For `phase=review`, return a JSON object matching `schemas/review.schema.json`.
+
+Example:
+
+```json
+{
+  "outcome": "changes_requested",
+  "summary": "Semantic review found one issue.",
+  "findings": [
+    {
+      "severity": "medium",
+      "title": "Missing edge-case handling.",
+      "evidence": "The changed function has no behavior for empty input.",
+      "required_fix": "Handle empty input or document why it is impossible."
+    }
+  ],
+  "next_phase": "execute"
+}
+```
+
+Review adapters are optional and cannot bypass deterministic gates. AXIOM checks verification outcome, docs disposition, task-scoped diff evidence, and plan write-scope mismatches before accepting any semantic adapter pass.
+
 ## Failure Handling
 
 AXIOM persists failed adapter attempts as phase artifacts instead of dropping the error into transient CLI output only.
@@ -98,6 +123,8 @@ For `plan`, a failed adapter attempt records a `plan` artifact with `outcome=blo
 
 For `execute`, a failed adapter attempt records an `execute` artifact with `outcome=failed`, the pre/post changed-file evidence AXIOM can observe, and leaves the task in `execute.failed`.
 
+For `review`, a failed adapter attempt records a `review` artifact with `outcome=blocked` and leaves the task in `review.blocked`.
+
 ## Reference Adapters
 
 See:
@@ -105,4 +132,12 @@ See:
 - `examples/adapters/file_write_execute_adapter.py`
 - `examples/adapters/openai_compatible_plan_adapter.py`
 
-The static and file-write adapters are intentionally simple shims for local testing and closed-infra bootstrapping. The OpenAI-compatible plan adapter is a small reference client for local `/v1/chat/completions` servers such as an internal gateway or local model server.
+The static and file-write adapters are intentionally simple shims for local testing and closed-infra bootstrapping. The OpenAI-compatible plan adapter is a small reference client for local `/v1/chat/completions` servers such as an internal gateway, Ollama-compatible gateway, vLLM, or another local model server.
+
+OpenAI-compatible plan adapter environment:
+- `AXIOM_OPENAI_COMPAT_BASE_URL`: defaults to `http://localhost:11434/v1`
+- `AXIOM_OPENAI_COMPAT_MODEL`: defaults to `local-model`
+- `AXIOM_OPENAI_COMPAT_API_KEY`: optional bearer token
+- `AXIOM_OPENAI_COMPAT_TIMEOUT`: request timeout in seconds, defaults to `120`
+- `AXIOM_OPENAI_COMPAT_RETRIES`: retry count after the first attempt, defaults to `0`
+- `AXIOM_OPENAI_COMPAT_RETRY_DELAY`: delay between retries in seconds, defaults to `0.25`

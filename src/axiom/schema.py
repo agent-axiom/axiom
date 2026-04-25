@@ -32,7 +32,7 @@ _FALLBACK_SCHEMAS: dict[str, dict[str, Any]] = {
         ],
         "properties": {
             "protocol": {"const": "axiom.adapter.v1"},
-            "phase": {"enum": ["plan", "execute"]},
+            "phase": {"enum": ["plan", "execute", "review"]},
             "task": {
                 "type": "object",
                 "required": ["id", "title", "kind", "status", "risk"],
@@ -178,7 +178,8 @@ _FALLBACK_SCHEMAS: dict[str, dict[str, Any]] = {
                     },
                 },
             },
-            "next_phase": {"enum": ["execute", "plan", "design", "verify", "done"]},
+            "next_phase": {"enum": ["execute", "plan", "design", "verify", "review", "done"]},
+            "adapter": {"type": "object"},
         },
     },
 }

@@ -27,6 +27,11 @@ class BootstrapCLITest(unittest.TestCase):
         namespace = parser.parse_args(["run", "plan", "AX-1", "--adapter-command", "python3 adapter.py"])
         self.assertEqual(namespace.adapter_command, "python3 adapter.py")
 
+    def test_run_review_accepts_adapter_command(self) -> None:
+        parser = build_parser()
+        namespace = parser.parse_args(["run", "review", "AX-1", "--adapter-command", "python3 reviewer.py"])
+        self.assertEqual(namespace.adapter_command, "python3 reviewer.py")
+
     def test_run_phase_accepts_force_override(self) -> None:
         parser = build_parser()
         namespace = parser.parse_args(["run", "plan", "AX-1", "--force"])

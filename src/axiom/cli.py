@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 from .approvals import approve_command, list_approvals
-from .git import remove_task_worktree, task_diff
+from .doctor import render_doctor, run_doctor
+from .git import cleanup_task_worktree, task_diff
 from .phases import PhaseTransitionError, finish_task, run_design, run_execute, run_plan, run_review, run_verify
 from .task_file import create_task, list_task_paths, load_task, resolve_task_path
 from .tool_broker import DEFAULT_COMMAND_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS
@@ -25,6 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
     version_parser = subparsers.add_parser("version", help="Show AXIOM version metadata")
     version_parser.add_argument("--verbose", action="store_true")
 
+    doctor_parser = subparsers.add_parser("doctor", help="Check local AXIOM runtime readiness")
+    doctor_parser.add_argument("--json", action="store_true")
+
     adapter_parser = subparsers.add_parser("adapter", help="Inspect agent adapter support")
     adapter_subparsers = adapter_parser.add_subparsers(dest="adapter_command", required=True)
     adapter_subparsers.add_parser("list", help="List built-in adapter protocols")
@@ -38,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup_parser = subparsers.add_parser("cleanup", help="Remove a managed task worktree")
     cleanup_parser.add_argument("task")
     cleanup_parser.add_argument("--force", action="store_true", help="Allow git worktree removal")
+    cleanup_parser.add_argument("--dry-run", action="store_true", help="Print cleanup actions without changing files")
+    cleanup_parser.add_argument("--only-if-done", action="store_true", help="Refuse cleanup unless task status is done")
+    branch_policy = cleanup_parser.add_mutually_exclusive_group()
+    branch_policy.add_argument("--delete-branch", action="store_true", help="Delete the task branch with safe git branch -d")
+    branch_policy.add_argument("--keep-branch", action="store_true", help="Keep the task branch after removing the worktree")
 
     policy_parser = subparsers.add_parser("policy", help="Manage local AXIOM policy approvals")
     policy_subparsers = policy_parser.add_subparsers(dest="policy_command", required=True)
@@ -89,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     review_parser = run_subparsers.add_parser("review")
     review_parser.add_argument("task")
+    review_parser.add_argument("--adapter-command")
     review_parser.add_argument("--force", action="store_true")
 
     finish_parser = subparsers.add_parser("finish", help="Complete a task")
@@ -163,6 +173,14 @@ def main(argv: list[str] | None = None) -> int:
             print(metadata.version)
         return 0
 
+    if args.command == "doctor":
+        payload = run_doctor(repo_root)
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(render_doctor(payload))
+        return 1 if payload["overall"] == "fail" else 0
+
     if args.command == "adapter":
         if args.adapter_command == "list":
             print("command\taxiom.adapter.v1 JSON over stdin/stdout")
@@ -181,14 +199,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     if args.command == "cleanup":
-        if not args.force:
-            print("cleanup requires --force")
-            return 1
         task_path = resolve_task_path(repo_root, args.task)
         task = load_task(task_path)
-        removed, message = remove_task_worktree(task, force=True)
-        print(message)
-        return 0 if removed else 1
+        result = cleanup_task_worktree(
+            task,
+            force=args.force,
+            dry_run=args.dry_run,
+            only_if_done=args.only_if_done,
+            delete_branch=args.delete_branch,
+        )
+        print("\n".join(result.messages))
+        return 0 if result.ok else 1
 
     if args.command == "policy":
         if args.policy_command == "approve":
@@ -264,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
                     force=args.force,
                 )
             elif args.phase == "review":
-                artifact = run_review(task_path, force=args.force)
+                artifact = run_review(task_path, adapter_command=args.adapter_command, force=args.force)
             else:
                 parser.error(f"unsupported phase {args.phase}")
                 return 2

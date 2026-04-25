@@ -524,7 +524,24 @@ def _diff_findings(diff_text: str) -> list[dict[str, object]]:
     return findings
 
 
-def run_review(task_path: Path, *, force: bool = False) -> Path:
+def _blocked_review_adapter_payload(message: str, receipt: dict[str, object]) -> dict[str, object]:
+    return {
+        "outcome": "blocked",
+        "summary": "Review adapter failed.",
+        "findings": [
+            {
+                "severity": "blocker",
+                "title": "Review adapter failed.",
+                "evidence": message,
+                "required_fix": "Fix or replace the review adapter, then rerun review.",
+            }
+        ],
+        "next_phase": "review",
+        "adapter": receipt,
+    }
+
+
+def run_review(task_path: Path, *, adapter_command: str | None = None, force: bool = False) -> Path:
     _enforce_phase_transition(task_path=task_path, phase="review", next_status="review.passed", force=force)
     task = load_task(task_path)
     repo_root = repo_root_for(task_path)
@@ -619,33 +636,78 @@ def run_review(task_path: Path, *, force: bool = False) -> Path:
                 )
         findings.extend(_diff_findings(diff_text))
 
+    base_context = {
+        "changed_files": changed_files,
+        "plan_write_scope": planned_scope,
+        "planned_scope": planned_scope,
+        "actual_scope": actual_scope,
+        "scope_mismatches": scope_mismatches,
+        "isolation_mode": task.metadata.isolation_mode,
+    }
+
     if findings:
         payload = {
             "outcome": "changes_requested",
             "summary": "Review found issues that must be addressed before finish.",
             "findings": findings,
             "next_phase": "execute",
-            "changed_files": changed_files,
-            "plan_write_scope": planned_scope,
-            "planned_scope": planned_scope,
-            "actual_scope": actual_scope,
-            "scope_mismatches": scope_mismatches,
-            "isolation_mode": task.metadata.isolation_mode,
+            **base_context,
         }
         status = "review.changes_requested"
         blocked_reason = payload["summary"]
+    elif adapter_command:
+        request = build_adapter_request(
+            phase="review",
+            task=task,
+            task_path=task_path,
+            latest_artifacts={"plan": plan_result, "verify": verify_result},
+            diff=diff_text,
+        )
+        try:
+            adapter_result = invoke_command_adapter(command=adapter_command, request=request, cwd=workspace)
+        except AdapterError as exc:
+            payload = {**_blocked_review_adapter_payload(str(exc), exc.receipt), **base_context}
+            artifact_path = _write_validated_phase_result(
+                repo_root=repo_root, task_id=task.metadata.id, phase="review", payload=payload
+            )
+            update_task(
+                task_path,
+                status="review.blocked",
+                section_updates={"Review": _render_review_markdown(payload)},
+                metadata_updates={"blocked_reason": str(exc)},
+            )
+            return artifact_path
+        payload = {**adapter_result.payload, **base_context, "adapter": adapter_result.receipt}
+        try:
+            validate_phase_payload("review", payload)
+        except SchemaValidationError as exc:
+            payload = {
+                **_blocked_review_adapter_payload(
+                    f"adapter payload failed schema validation: {exc}",
+                    adapter_result.receipt,
+                ),
+                **base_context,
+            }
+            artifact_path = _write_validated_phase_result(
+                repo_root=repo_root, task_id=task.metadata.id, phase="review", payload=payload
+            )
+            update_task(
+                task_path,
+                status="review.blocked",
+                section_updates={"Review": _render_review_markdown(payload)},
+                metadata_updates={"blocked_reason": str(exc)},
+            )
+            return artifact_path
+        outcome = str(payload["outcome"])
+        status = "review.passed" if outcome == "pass" else f"review.{outcome}"
+        blocked_reason = "" if outcome == "pass" else str(payload["summary"])
     else:
         payload = {
             "outcome": "pass",
             "summary": "Review passed using task-scoped diff and persisted verification evidence.",
             "findings": [],
             "next_phase": "done",
-            "changed_files": changed_files,
-            "plan_write_scope": planned_scope,
-            "planned_scope": planned_scope,
-            "actual_scope": actual_scope,
-            "scope_mismatches": scope_mismatches,
-            "isolation_mode": task.metadata.isolation_mode,
+            **base_context,
         }
         status = "review.passed"
         blocked_reason = ""

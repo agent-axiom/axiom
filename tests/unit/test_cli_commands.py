@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,44 @@ class CommandIntegrationTest(unittest.TestCase):
         self.assertEqual(show_code, 0)
         self.assertIn("Bootstrap task", show_stdout.getvalue())
 
+    def test_doctor_json_reports_environment_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(["--repo-root", str(repo_root), "doctor", "--json"])
+
+        payload = json.loads(stdout.getvalue())
+        checks = {item["name"]: item for item in payload["checks"]}
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["overall"], "pass")
+        self.assertEqual(checks["schema availability"]["status"], "pass")
+        self.assertEqual(checks["git head"]["status"], "pass")
+        self.assertEqual(checks["worktree readiness"]["status"], "pass")
+        self.assertIn(payload["runtime_mode"], {"source", "installed"})
+
+    def test_doctor_warns_for_non_git_repo_without_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(["--repo-root", str(repo_root), "doctor", "--json"])
+
+        payload = json.loads(stdout.getvalue())
+        checks = {item["name"]: item for item in payload["checks"]}
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["overall"], "warn")
+        self.assertEqual(checks["git repository"]["status"], "warn")
+        self.assertEqual(checks["worktree readiness"]["status"], "warn")
+
     def test_worktree_list_and_path_commands_use_task_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
@@ -69,6 +108,102 @@ class CommandIntegrationTest(unittest.TestCase):
         self.assertIn(task.metadata.id, list_stdout.getvalue())
         self.assertIn(task.metadata.isolation_mode, list_stdout.getvalue())
         self.assertEqual(path_stdout.getvalue().strip(), task.metadata.worktree)
+
+    def test_cleanup_dry_run_only_if_done_and_default_branch_keep(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(main(["--repo-root", str(repo_root), "make", "Cleanup UX"]), 0)
+            task_path = Path(stdout.getvalue().strip())
+            task = load_task(task_path)
+            worktree = Path(task.metadata.worktree)
+
+            dry_run_stdout = io.StringIO()
+            with redirect_stdout(dry_run_stdout):
+                dry_run_code = main(["--repo-root", str(repo_root), "cleanup", str(task_path), "--dry-run"])
+            worktree_exists_after_dry_run = worktree.exists()
+
+            only_done_stdout = io.StringIO()
+            with redirect_stdout(only_done_stdout):
+                only_done_code = main(["--repo-root", str(repo_root), "cleanup", str(task_path), "--only-if-done"])
+            worktree_exists_after_only_done = worktree.exists()
+
+            cleanup_stdout = io.StringIO()
+            with redirect_stdout(cleanup_stdout):
+                cleanup_code = main(["--repo-root", str(repo_root), "cleanup", str(task_path), "--force"])
+            branch_check = subprocess.run(
+                ["git", "show-ref", "--verify", f"refs/heads/{task.metadata.branch}"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(dry_run_code, 0)
+        self.assertIn("would remove worktree", dry_run_stdout.getvalue())
+        self.assertIn("would keep branch", dry_run_stdout.getvalue())
+        self.assertTrue(worktree_exists_after_dry_run)
+        self.assertEqual(only_done_code, 1)
+        self.assertIn("task is not done", only_done_stdout.getvalue())
+        self.assertTrue(worktree_exists_after_only_done)
+        self.assertEqual(cleanup_code, 0)
+        self.assertIn("worktree removed", cleanup_stdout.getvalue())
+        self.assertIn("branch kept", cleanup_stdout.getvalue())
+        self.assertFalse(worktree.exists())
+        self.assertEqual(branch_check.returncode, 0)
+
+    def test_cleanup_can_delete_branch_after_done_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(main(["--repo-root", str(repo_root), "make", "Cleanup branch"]), 0)
+            task_path = Path(stdout.getvalue().strip())
+            update_task(task_path, status="done")
+            task = load_task(task_path)
+            worktree = Path(task.metadata.worktree)
+
+            cleanup_stdout = io.StringIO()
+            with redirect_stdout(cleanup_stdout):
+                cleanup_code = main(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "cleanup",
+                        str(task_path),
+                        "--only-if-done",
+                        "--force",
+                        "--delete-branch",
+                    ]
+                )
+            branch_check = subprocess.run(
+                ["git", "show-ref", "--verify", f"refs/heads/{task.metadata.branch}"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(cleanup_code, 0)
+        self.assertIn("worktree removed", cleanup_stdout.getvalue())
+        self.assertIn("branch deleted", cleanup_stdout.getvalue())
+        self.assertFalse(worktree.exists())
+        self.assertNotEqual(branch_check.returncode, 0)
 
     def test_full_cli_lifecycle_with_adapter_plan_and_execute(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

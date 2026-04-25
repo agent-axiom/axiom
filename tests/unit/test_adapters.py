@@ -6,7 +6,9 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from axiom.adapters import build_adapter_request
 from axiom.artifacts import latest_phase_result
-from axiom.phases import run_design, run_execute, run_plan
+from axiom.phases import run_design, run_execute, run_plan, run_review, run_verify
 from axiom.schema import validate_phase_payload
 from axiom.task_file import create_task, load_task, update_task
 
@@ -47,7 +49,7 @@ class AdapterTest(unittest.TestCase):
 
         self.assertTrue(spec_path.exists())
         self.assertEqual(request_schema["properties"]["protocol"]["const"], "axiom.adapter.v1")
-        self.assertEqual(request_schema["properties"]["phase"]["enum"], ["plan", "execute"])
+        self.assertEqual(request_schema["properties"]["phase"]["enum"], ["plan", "execute", "review"])
         self.assertTrue(static_plan.exists())
         self.assertTrue(file_writer.exists())
         self.assertTrue(openai_compatible.exists())
@@ -247,3 +249,215 @@ class AdapterTest(unittest.TestCase):
         self.assertEqual(task.metadata.status, "plan.blocked")
         self.assertEqual(result["adapter"]["status"], "blocked")
         self.assertIn("AXIOM_ADAPTER_ALLOWLIST", result["adapter"]["stderr"])
+
+    def test_review_adapter_can_request_changes_after_deterministic_gates_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            _init_repo(repo_root)
+            adapter_script = repo_root / "review_adapter.py"
+            adapter_script.write_text(
+                textwrap.dedent(
+                    """
+                    import json
+                    import sys
+
+                    request = json.load(sys.stdin)
+                    assert request["phase"] == "review"
+                    assert "adapter changed" in request["diff"]
+                    json.dump({
+                        "outcome": "changes_requested",
+                        "summary": "Semantic review found one issue.",
+                        "findings": [
+                            {
+                                "severity": "medium",
+                                "title": "Adapter semantic finding.",
+                                "evidence": "Fake semantic reviewer saw a problem.",
+                                "required_fix": "Address the fake semantic issue."
+                            }
+                        ],
+                        "next_phase": "execute"
+                    }, sys.stdout)
+                    """
+                ).strip(),
+                encoding="utf-8",
+            )
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Review adapter",
+                kind="feature",
+                now=datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc),
+            )
+            update_task(
+                task_path,
+                section_updates={
+                    "Repo Anchors": "- app.py",
+                    "Docs Impact": "No documentation changes required.",
+                },
+                metadata_updates={"docs_status": "not_needed"},
+            )
+
+            run_design(task_path)
+            run_plan(task_path)
+            task = load_task(task_path)
+            Path(task.metadata.worktree, "app.py").write_text("print('adapter changed')\n", encoding="utf-8")
+            run_execute(task_path)
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('ok')\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "observed"}],
+            )
+            run_review(task_path, adapter_command=f"{sys.executable} {adapter_script}")
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(task.metadata.status, "review.changes_requested")
+        self.assertEqual(result["outcome"], "changes_requested")
+        self.assertEqual(result["adapter"]["status"], "passed")
+        self.assertEqual(result["findings"][0]["title"], "Adapter semantic finding.")
+
+    def test_review_adapter_cannot_bypass_deterministic_scope_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            _init_repo(repo_root)
+            adapter_script = repo_root / "passing_review_adapter.py"
+            adapter_script.write_text(
+                textwrap.dedent(
+                    """
+                    import json
+                    import sys
+
+                    json.dump({
+                        "outcome": "pass",
+                        "summary": "Adapter would pass.",
+                        "findings": [],
+                        "next_phase": "done"
+                    }, sys.stdout)
+                    """
+                ).strip(),
+                encoding="utf-8",
+            )
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Review adapter bypass",
+                kind="feature",
+                now=datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc),
+            )
+            update_task(
+                task_path,
+                section_updates={
+                    "Repo Anchors": "- app.py",
+                    "Docs Impact": "No documentation changes required.",
+                },
+                metadata_updates={"docs_status": "not_needed"},
+            )
+
+            run_design(task_path)
+            run_plan(task_path)
+            task = load_task(task_path)
+            Path(task.metadata.worktree, "README.md").write_text("outside scope\n", encoding="utf-8")
+            run_execute(task_path)
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('ok')\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "observed"}],
+            )
+            run_review(task_path, adapter_command=f"{sys.executable} {adapter_script}")
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(task.metadata.status, "review.changes_requested")
+        self.assertEqual(result["outcome"], "changes_requested")
+        self.assertNotIn("adapter", result)
+        self.assertEqual(result["findings"][0]["title"], "Changed file outside plan write scope.")
+
+    def test_openai_compatible_plan_adapter_retries_against_fake_server(self) -> None:
+        class FakeOpenAIHandler(BaseHTTPRequestHandler):
+            calls = 0
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:
+                FakeOpenAIHandler.calls += 1
+                _ = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                if FakeOpenAIHandler.calls == 1:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(b"temporary failure")
+                    return
+                body = {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "summary": "Fake server plan.",
+                                        "steps": [
+                                            {
+                                                "id": "step-1",
+                                                "title": "Edit app.py.",
+                                                "write_scope": ["app.py"],
+                                                "checks": [],
+                                            }
+                                        ],
+                                        "manual_smoke": [
+                                            {
+                                                "id": "smoke-1",
+                                                "instruction": "Run app.py.",
+                                            }
+                                        ],
+                                        "stop_conditions": ["Stop outside app.py."],
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+                payload = json.dumps(body).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), FakeOpenAIHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            repo_root = Path(__file__).resolve().parents[2]
+            adapter = repo_root / "examples" / "adapters" / "openai_compatible_plan_adapter.py"
+            request = {
+                "task": {"title": "Fake adapter"},
+                "sections": {"Repo Anchors": "- app.py"},
+                "workspace": str(repo_root),
+            }
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AXIOM_OPENAI_COMPAT_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+                    "AXIOM_OPENAI_COMPAT_MODEL": "fake-model",
+                    "AXIOM_OPENAI_COMPAT_TIMEOUT": "2",
+                    "AXIOM_OPENAI_COMPAT_RETRIES": "1",
+                    "AXIOM_OPENAI_COMPAT_RETRY_DELAY": "0",
+                }
+            )
+
+            completed = subprocess.run(
+                [sys.executable, str(adapter)],
+                input=json.dumps(request),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(FakeOpenAIHandler.calls, 2)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["summary"], "Fake server plan.")
+        self.assertEqual(payload["steps"][0]["write_scope"], ["app.py"])

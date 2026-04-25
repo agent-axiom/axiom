@@ -377,7 +377,7 @@ This repository now proves the load-bearing local workflow and release transpare
 - strict phase transition enforcement with explicit `--force` override logging
 - persisted artifacts
 - verification and review gates
-- installed-wheel smoke coverage in CI and release workflows
+- self-contained installed-wheel smoke coverage in CI and release workflows
 - deterministic local CLI control
 - embedded build metadata
 - GitHub Releases and GitHub Actions based release verification assets

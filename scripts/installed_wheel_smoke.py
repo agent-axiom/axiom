@@ -43,6 +43,79 @@ def python_inline_command(python_bin: str, snippet: str) -> str:
     return f"{shlex.quote(python_bin)} -c {shlex.quote(snippet)}"
 
 
+def write_smoke_adapters(adapter_dir: Path) -> tuple[Path, Path]:
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    plan_adapter = adapter_dir / "plan_adapter.py"
+    execute_adapter = adapter_dir / "execute_adapter.py"
+    plan_adapter.write_text(
+        """from __future__ import annotations
+
+import json
+import sys
+
+
+def main() -> int:
+    request = json.load(sys.stdin)
+    anchors = []
+    for line in request.get("sections", {}).get("Repo Anchors", "").splitlines():
+        anchor = line.strip().lstrip("-*").strip().strip("`")
+        if anchor:
+            anchors.append(anchor)
+    if not anchors:
+        anchors = ["app.py"]
+    json.dump(
+        {
+            "summary": "Smoke adapter plan.",
+            "steps": [
+                {
+                    "id": "step-1",
+                    "title": f"Apply the installed-wheel smoke change in {anchors[0]}.",
+                    "write_scope": anchors,
+                    "checks": [],
+                }
+            ],
+            "manual_smoke": [
+                {
+                    "id": "smoke-1",
+                    "instruction": "Observe installed CLI smoke output.",
+                }
+            ],
+            "stop_conditions": ["Stop if installed CLI smoke cannot edit app.py."],
+        },
+        sys.stdout,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+""",
+        encoding="utf-8",
+    )
+    execute_adapter.write_text(
+        """from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    request = json.load(sys.stdin)
+    workspace = Path(str(request["workspace"]))
+    (workspace / "app.py").write_text("print('adapter changed')\\n", encoding="utf-8")
+    json.dump({"summary": "Smoke execute adapter updated app.py."}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+""",
+        encoding="utf-8",
+    )
+    return plan_adapter, execute_adapter
+
+
 def replace_section(task_path: Path, section: str, content: str) -> None:
     text = task_path.read_text(encoding="utf-8")
     marker = f"## {section}\n"
@@ -63,12 +136,12 @@ def main() -> int:
     invocation_cwd = Path.cwd()
     axiom_bin = resolve_tool_path(args.axiom_bin, cwd=invocation_cwd)
     python_bin = resolve_tool_path(args.python_bin, cwd=invocation_cwd)
-    project_root = Path(__file__).resolve().parents[1]
-    plan_adapter = project_root / "examples" / "adapters" / "static_plan_adapter.py"
-    execute_adapter = project_root / "examples" / "adapters" / "file_write_execute_adapter.py"
 
     with tempfile.TemporaryDirectory() as tmp:
-        repo_root = Path(tmp)
+        tmp_root = Path(tmp)
+        repo_root = tmp_root / "repo"
+        repo_root.mkdir()
+        plan_adapter, execute_adapter = write_smoke_adapters(tmp_root / "adapters")
         run(["git", "init", "-b", "main"], cwd=repo_root)
         run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root)
         run(["git", "config", "user.name", "AXIOM Smoke"], cwd=repo_root)

@@ -11,7 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.release_manifest import build_manifest
 from scripts.sbom import build_sbom
-from scripts.installed_wheel_smoke import adapter_command, assert_artifact_outcome, python_inline_command, resolve_tool_path
+from scripts.installed_wheel_smoke import (
+    adapter_command,
+    assert_artifact_outcome,
+    python_inline_command,
+    resolve_tool_path,
+    write_smoke_adapters,
+)
 from scripts.sync_schemas import check_schemas
 from scripts.write_build_metadata import render_build_module
 
@@ -111,6 +117,35 @@ class ReleaseScriptTest(unittest.TestCase):
         command = python_inline_command("/tmp/python bin/python", "print('ok')")
 
         self.assertEqual(command, "'/tmp/python bin/python' -c 'print('\"'\"'ok'\"'\"')'")
+
+    def test_installed_smoke_writes_self_contained_reference_adapters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan_adapter, execute_adapter = write_smoke_adapters(root / "adapters")
+            workspace = root / "workspace"
+            workspace.mkdir()
+
+            plan_result = subprocess.run(
+                [sys.executable, str(plan_adapter)],
+                input=json.dumps({"sections": {"Repo Anchors": "- app.py"}}),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            execute_result = subprocess.run(
+                [sys.executable, str(execute_adapter)],
+                input=json.dumps({"workspace": str(workspace)}),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            edited_app = (workspace / "app.py").read_text(encoding="utf-8")
+
+        self.assertEqual(plan_result.returncode, 0, plan_result.stderr)
+        self.assertEqual(execute_result.returncode, 0, execute_result.stderr)
+        self.assertEqual(json.loads(plan_result.stdout)["steps"][0]["write_scope"], ["app.py"])
+        self.assertEqual(json.loads(execute_result.stdout)["summary"], "Smoke execute adapter updated app.py.")
+        self.assertIn("adapter changed", edited_app)
 
     def test_installed_smoke_asserts_artifact_outcome(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

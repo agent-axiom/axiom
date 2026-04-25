@@ -41,6 +41,9 @@ jobs:
             --build-timestamp "$BUILD_TIMESTAMP" \
             --source-repo "https://github.com/${GITHUB_REPOSITORY}"
 
+      - name: Check packaged schemas
+        run: make check-schemas
+
       - name: Run unit suite
         run: make test
 

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from axiom.artifacts import latest_phase_result
 from axiom.cli import main
+from axiom.git import MAX_UNTRACKED_DIFF_BYTES
 from axiom.phases import run_design, run_execute, run_plan
 from axiom.task_file import create_task, load_task
 
@@ -160,6 +161,56 @@ class GitRuntimeTest(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertIn("new_feature.py", diff_output)
             self.assertIn("+print('new evidence')", diff_output)
+
+    def test_diff_command_omits_large_untracked_file_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            _init_repo(repo_root)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Large file evidence",
+                kind="feature",
+                now=datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc),
+            )
+            task = load_task(task_path)
+            marker = "large-content-marker"
+            Path(task.metadata.worktree, "large.log").write_text(
+                marker + ("x" * MAX_UNTRACKED_DIFF_BYTES),
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(["--repo-root", str(repo_root), "diff", str(task_path)])
+
+            diff_output = stdout.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("large.log", diff_output)
+            self.assertIn("content_omitted_reason: binary_or_too_large", diff_output)
+            self.assertNotIn(marker, diff_output)
+
+    def test_diff_command_omits_binary_untracked_file_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            _init_repo(repo_root)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Binary file evidence",
+                kind="feature",
+                now=datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc),
+            )
+            task = load_task(task_path)
+            Path(task.metadata.worktree, "image.bin").write_bytes(b"\x00\x01binary")
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(["--repo-root", str(repo_root), "diff", str(task_path)])
+
+            diff_output = stdout.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertIn("image.bin", diff_output)
+            self.assertIn("content_omitted_reason: binary_or_too_large", diff_output)
+            self.assertNotIn("\\x00", diff_output)
 
     def test_execute_records_changed_files_from_task_worktree_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

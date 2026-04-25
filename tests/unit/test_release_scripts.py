@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.release_manifest import build_manifest
 from scripts.sbom import build_sbom
+from scripts.installed_wheel_smoke import adapter_command, assert_artifact_outcome, python_inline_command, resolve_tool_path
+from scripts.sync_schemas import check_schemas
 from scripts.write_build_metadata import render_build_module
 
 
@@ -89,3 +91,45 @@ class ReleaseScriptTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["packages"][0]["name"], "axiom-workflow")
+
+    def test_installed_smoke_resolves_relative_tool_paths_from_invocation_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(
+                resolve_tool_path(".venv/bin/python", cwd=root),
+                str((root / ".venv/bin/python").resolve()),
+            )
+
+        self.assertEqual(resolve_tool_path("axiom", cwd=Path("/tmp")), "axiom")
+
+    def test_installed_smoke_quotes_adapter_command_paths(self) -> None:
+        command = adapter_command("/tmp/python bin/python", Path("/tmp/adapter dir/plan.py"))
+
+        self.assertEqual(command, "'/tmp/python bin/python' '/tmp/adapter dir/plan.py'")
+
+    def test_installed_smoke_quotes_verify_python_command(self) -> None:
+        command = python_inline_command("/tmp/python bin/python", "print('ok')")
+
+        self.assertEqual(command, "'/tmp/python bin/python' -c 'print('\"'\"'ok'\"'\"')'")
+
+    def test_installed_smoke_asserts_artifact_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact = Path(tmp) / "verify.json"
+            artifact.write_text(json.dumps({"outcome": "failed"}), encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "expected outcome=passed"):
+                assert_artifact_outcome(str(artifact), field="outcome", expected="passed")
+
+    def test_check_schemas_reports_runtime_schema_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "schemas"
+            packaged = root / "src" / "axiom" / "schemas"
+            source.mkdir(parents=True)
+            packaged.mkdir(parents=True)
+            (source / "plan.schema.json").write_text('{"type":"object"}\n', encoding="utf-8")
+            (packaged / "plan.schema.json").write_text('{"type":"array"}\n', encoding="utf-8")
+
+            issues = check_schemas(source, packaged)
+
+        self.assertEqual(issues, ["schema drift: plan.schema.json"])

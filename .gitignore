@@ -5,6 +5,7 @@
 .axiom/artifacts/local/
 .axiom/logs/
 .axiom/runtime/
+.venv-wheel-smoke/
 __pycache__/
 *.pyc
 build/

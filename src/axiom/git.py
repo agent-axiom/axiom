@@ -6,6 +6,9 @@ from pathlib import Path
 
 from .models import TaskDocument
 
+MAX_UNTRACKED_DIFF_BYTES = 64 * 1024
+BINARY_DETECTION_SAMPLE_BYTES = 8192
+
 
 @dataclass(frozen=True)
 class WorkspacePlan:
@@ -175,11 +178,45 @@ def _untracked_files(repo_root: Path) -> list[str]:
     return sorted(files)
 
 
+def _is_binary_file(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            sample = handle.read(BINARY_DETECTION_SAMPLE_BYTES)
+    except OSError:
+        return True
+    if b"\0" in sample:
+        return True
+    try:
+        sample.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    return False
+
+
+def _omitted_untracked_diff(file_name: str, *, file_size: int) -> str:
+    return "\n".join(
+        [
+            f"diff --git a/{file_name} b/{file_name}",
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b/{file_name}",
+            "@@ evidence omitted @@",
+            "+content_omitted_reason: binary_or_too_large",
+            f"+file_size_bytes: {file_size}",
+            f"+max_untracked_diff_bytes: {MAX_UNTRACKED_DIFF_BYTES}",
+        ]
+    )
+
+
 def _untracked_diff(repo_root: Path) -> str:
     chunks: list[str] = []
     for file_name in _untracked_files(repo_root):
         path = repo_root / file_name
         if not path.is_file():
+            continue
+        file_size = path.stat().st_size
+        if file_size > MAX_UNTRACKED_DIFF_BYTES or _is_binary_file(path):
+            chunks.append(_omitted_untracked_diff(file_name, file_size=file_size))
             continue
         result = _run_git(repo_root, ["diff", "--no-index", "--", "/dev/null", file_name])
         if result.stdout.strip():

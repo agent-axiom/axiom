@@ -286,6 +286,7 @@ def cleanup_task_worktree(
     task: TaskDocument,
     *,
     force: bool = False,
+    discard_changes: bool = False,
     dry_run: bool = False,
     only_if_done: bool = False,
     delete_branch: bool = False,
@@ -318,8 +319,17 @@ def cleanup_task_worktree(
 
     worktree_removed = False
     if worktree.exists():
+        dirty_files = repo_changed_files(worktree)
+        if dirty_files and not discard_changes:
+            return CleanupResult(
+                False,
+                [
+                    "worktree has local changes; rerun with --discard-changes to remove it",
+                    *[f"- {file_name}" for file_name in dirty_files],
+                ],
+            )
         args = ["worktree", "remove"]
-        if force:
+        if discard_changes:
             args.append("--force")
         args.append(str(worktree))
         result = _run_git(repo_root, args)
@@ -327,6 +337,8 @@ def cleanup_task_worktree(
             return CleanupResult(False, [result.stderr.strip() or "git worktree remove failed"])
         worktree_removed = True
         messages.append(f"worktree removed: {worktree}")
+        if dirty_files and discard_changes:
+            messages.append("discarded local changes")
     else:
         messages.append(f"worktree already removed: {worktree}")
 
@@ -348,5 +360,5 @@ def cleanup_task_worktree(
 
 
 def remove_task_worktree(task: TaskDocument, *, force: bool = False) -> tuple[bool, str]:
-    result = cleanup_task_worktree(task, force=force)
+    result = cleanup_task_worktree(task, force=force, discard_changes=force)
     return result.ok, "\n".join(result.messages)

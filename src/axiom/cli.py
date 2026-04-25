@@ -42,6 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
     cleanup_parser = subparsers.add_parser("cleanup", help="Remove a managed task worktree")
     cleanup_parser.add_argument("task")
     cleanup_parser.add_argument("--force", action="store_true", help="Allow git worktree removal")
+    cleanup_parser.add_argument("--discard-changes", action="store_true", help="Remove dirty worktree changes")
     cleanup_parser.add_argument("--dry-run", action="store_true", help="Print cleanup actions without changing files")
     cleanup_parser.add_argument("--only-if-done", action="store_true", help="Refuse cleanup unless task status is done")
     branch_policy = cleanup_parser.add_mutually_exclusive_group()
@@ -204,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         result = cleanup_task_worktree(
             task,
             force=args.force,
+            discard_changes=args.discard_changes,
             dry_run=args.dry_run,
             only_if_done=args.only_if_done,
             delete_branch=args.delete_branch,

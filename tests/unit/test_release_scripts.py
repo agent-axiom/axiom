@@ -12,8 +12,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.release_manifest import build_manifest
 from scripts.sbom import build_sbom
 from scripts.installed_wheel_smoke import (
+    SmokeContext,
     adapter_command,
     assert_artifact_outcome,
+    collect_failure_diagnostics,
     python_inline_command,
     resolve_tool_path,
     write_smoke_adapters,
@@ -154,6 +156,26 @@ class ReleaseScriptTest(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "expected outcome=passed"):
                 assert_artifact_outcome(str(artifact), field="outcome", expected="passed")
+
+    def test_installed_smoke_failure_diagnostics_include_task_and_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_path = root / ".axiom" / "tasks" / "AX-1.md"
+            task_path.parent.mkdir(parents=True)
+            task_path.write_text("# AX-1\n\n## Status\nverify.failed\n", encoding="utf-8")
+            artifact = root / ".axiom" / "artifacts" / "shared" / "AX-1" / "verify" / "attempt-001" / "result.json"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text(json.dumps({"outcome": "failed", "summary": "boom"}), encoding="utf-8")
+            context = SmokeContext(repo_root=root, task_path=task_path, worktree=root / ".worktrees" / "AX-1")
+
+            diagnostics = collect_failure_diagnostics(context, RuntimeError("smoke failed"))
+
+        self.assertIn("AXIOM installed-wheel smoke diagnostics", diagnostics)
+        self.assertIn("smoke failed", diagnostics)
+        self.assertIn("## task file", diagnostics)
+        self.assertIn("verify.failed", diagnostics)
+        self.assertIn("## latest artifacts", diagnostics)
+        self.assertIn('"outcome": "failed"', diagnostics)
 
     def test_check_schemas_reports_runtime_schema_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

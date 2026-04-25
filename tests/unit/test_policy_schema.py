@@ -13,7 +13,7 @@ from axiom.artifacts import latest_phase_result
 from axiom.approvals import approve_command
 from axiom.phases import run_design, run_execute, run_plan, run_verify
 from axiom.policy import evaluate_command
-from axiom.schema import SchemaValidationError, validate_phase_payload
+from axiom.schema import SchemaValidationError, unsupported_schema_keywords, validate_schema_subset, validate_phase_payload
 from axiom.task_file import create_task, load_task
 
 
@@ -36,6 +36,17 @@ class PolicySchemaTest(unittest.TestCase):
         validate_phase_payload("finish", {"outcome": "blocked", "summary": "not ready"})
         with self.assertRaises(SchemaValidationError):
             validate_phase_payload("adapter-request", {"protocol": "wrong"})
+
+    def test_schema_subset_rejects_unsupported_keywords_instead_of_ignoring_them(self) -> None:
+        schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"summary": {"type": "string"}},
+        }
+
+        self.assertEqual(unsupported_schema_keywords(schema), ["$.additionalProperties"])
+        with self.assertRaisesRegex(SchemaValidationError, "unsupported schema keyword"):
+            validate_schema_subset(schema)
 
     def test_verify_blocks_dangerous_git_command_before_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -421,10 +421,11 @@ bin/axiom --repo-root "$(pwd)" worktree list
 bin/axiom --repo-root "$(pwd)" worktree path "$TASK_ID"
 bin/axiom --repo-root "$(pwd)" cleanup "$TASK_ID" --dry-run
 bin/axiom --repo-root "$(pwd)" cleanup "$TASK_ID" --force
+bin/axiom --repo-root "$(pwd)" cleanup "$TASK_ID" --force --discard-changes
 bin/axiom --repo-root "$(pwd)" cleanup "$TASK_ID" --only-if-done --force --delete-branch
 ```
 
-Default cleanup removes only the managed worktree and keeps the task branch. `--delete-branch` uses safe `git branch -d`; unmerged branches are not force-deleted.
+Default cleanup removes only the managed worktree and keeps the task branch. `--force` authorizes cleanup, but it does not discard dirty worktree changes. Dirty worktrees require explicit `--discard-changes`. `--delete-branch` uses safe `git branch -d`; unmerged branches are not force-deleted.
 
 Runtime diagnostics:
 
@@ -436,6 +437,8 @@ bin/axiom --repo-root "$(pwd)" doctor --json
 `doctor` checks Python version, schema availability, git/HEAD/worktree readiness, write permissions, adapter trust environment, and policy profiles.
 
 Non-git repositories and git repositories without an initial commit run in `isolation_mode: degraded`. In degraded mode, review requires manual smoke evidence before it can pass.
+
+Schema validation is an AXIOM schema subset, not a full JSON Schema implementation. It supports the keywords AXIOM uses at runtime: `$schema`, `title`, `type`, `required`, `properties`, `items`, `enum`, `const`, `$defs`, and `$ref`. Unsupported keywords such as `additionalProperties` are rejected instead of being silently ignored.
 
 ## Repository Layout
 

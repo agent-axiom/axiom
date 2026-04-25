@@ -68,6 +68,12 @@ class BootstrapCLITest(unittest.TestCase):
         self.assertEqual(namespace.worktree_command, "path")
         self.assertEqual(namespace.task, "AX-1")
 
+    def test_cleanup_accepts_discard_changes_flag(self) -> None:
+        parser = build_parser()
+        namespace = parser.parse_args(["cleanup", "AX-1", "--force", "--discard-changes"])
+        self.assertTrue(namespace.force)
+        self.assertTrue(namespace.discard_changes)
+
     def test_policy_approve_keeps_top_level_command(self) -> None:
         parser = build_parser()
         namespace = parser.parse_args(

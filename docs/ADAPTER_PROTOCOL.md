@@ -28,6 +28,8 @@ Optional local trust guardrails:
 
 Every adapter receives one JSON object on stdin matching `schemas/adapter-request.schema.json`.
 
+AXIOM uses a small stdlib schema validator, not a full JSON Schema engine. Runtime schemas are limited to AXIOM's supported subset: `$schema`, `title`, `type`, `required`, `properties`, `items`, `enum`, `const`, `$defs`, and `$ref`. Unsupported keywords are rejected so schema authors do not get a false sense of enforcement.
+
 Important fields:
 - `protocol`: always `axiom.adapter.v1`
 - `phase`: `plan`, `execute`, or `review`

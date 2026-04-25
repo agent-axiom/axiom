@@ -10,6 +10,19 @@ class SchemaValidationError(ValueError):
     pass
 
 
+SUPPORTED_SCHEMA_KEYWORDS = {
+    "$defs",
+    "$ref",
+    "$schema",
+    "const",
+    "enum",
+    "items",
+    "properties",
+    "required",
+    "title",
+    "type",
+}
+
 _SCHEMA_ROOT = Path(__file__).resolve().parents[2] / "schemas"
 
 _FALLBACK_SCHEMAS: dict[str, dict[str, Any]] = {
@@ -205,6 +218,35 @@ def _load_schema(phase: str) -> dict[str, Any] | None:
     return _FALLBACK_SCHEMAS.get(phase)
 
 
+def unsupported_schema_keywords(schema: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+
+    def visit(node: Any, path: str) -> None:
+        if not isinstance(node, dict):
+            return
+        for key, value in node.items():
+            if key not in SUPPORTED_SCHEMA_KEYWORDS:
+                issues.append(f"{path}.{key}")
+            if key == "properties" and isinstance(value, dict):
+                for property_name, property_schema in value.items():
+                    visit(property_schema, f"{path}.properties.{property_name}")
+                continue
+            if key == "$defs" and isinstance(value, dict):
+                for definition_name, definition_schema in value.items():
+                    visit(definition_schema, f"{path}.$defs.{definition_name}")
+                continue
+            visit(value, f"{path}.{key}")
+
+    visit(schema, "$")
+    return issues
+
+
+def validate_schema_subset(schema: dict[str, Any]) -> None:
+    issues = unsupported_schema_keywords(schema)
+    if issues:
+        raise SchemaValidationError(f"unsupported schema keyword(s): {', '.join(issues)}")
+
+
 def _resolve_ref(schema: dict[str, Any], ref: str) -> dict[str, Any]:
     prefix = "#/$defs/"
     if not ref.startswith(prefix):
@@ -269,4 +311,5 @@ def validate_phase_payload(phase: str, payload: dict[str, object]) -> None:
     schema = _load_schema(phase)
     if schema is None:
         return
+    validate_schema_subset(schema)
     _validate_node(schema, schema, payload, "$")

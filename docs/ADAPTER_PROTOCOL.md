@@ -133,13 +133,15 @@ See:
 - `examples/adapters/static_plan_adapter.py`
 - `examples/adapters/file_write_execute_adapter.py`
 - `examples/adapters/openai_compatible_plan_adapter.py`
+- `examples/adapters/openai_compatible_review_adapter.py`
 
-The static and file-write adapters are intentionally simple shims for local testing and closed-infra bootstrapping. The OpenAI-compatible plan adapter is a small reference client for local `/v1/chat/completions` servers such as an internal gateway, Ollama-compatible gateway, vLLM, or another local model server.
+The static and file-write adapters are intentionally simple shims for local testing and closed-infra bootstrapping. The OpenAI-compatible plan and review adapters are small reference clients for local `/v1/chat/completions` servers such as an internal gateway, Ollama-compatible gateway, vLLM, or another local model server.
 
-OpenAI-compatible plan adapter environment:
+OpenAI-compatible adapter environment:
 - `AXIOM_OPENAI_COMPAT_BASE_URL`: defaults to `http://localhost:11434/v1`
 - `AXIOM_OPENAI_COMPAT_MODEL`: defaults to `local-model`
 - `AXIOM_OPENAI_COMPAT_API_KEY`: optional bearer token
 - `AXIOM_OPENAI_COMPAT_TIMEOUT`: request timeout in seconds, defaults to `120`
 - `AXIOM_OPENAI_COMPAT_RETRIES`: retry count after the first attempt, defaults to `0`
 - `AXIOM_OPENAI_COMPAT_RETRY_DELAY`: delay between retries in seconds, defaults to `0.25`
+- `AXIOM_OPENAI_COMPAT_SCHEMA_RETRIES`: retry count for invalid model JSON or missing required response keys, defaults to `1`

@@ -184,6 +184,10 @@ def _scope_mismatches(changed_files: list[str], planned_scope: list[str]) -> lis
     return mismatches
 
 
+def _is_trust_config_file(file_name: str) -> bool:
+    return file_name in {".axiom/policy.yaml", ".axiom/policy.yml"}
+
+
 def _deterministic_plan_payload(task_title: str, scope: str, anchors: list[str], checks: list[str]) -> dict[str, object]:
     steps: list[dict[str, object]] = []
     if anchors:
@@ -659,6 +663,17 @@ def run_review(task_path: Path, *, adapter_command: str | None = None, force: bo
                     }
                 )
         findings.extend(_diff_findings(diff_text))
+        for file_name in changed_files:
+            if _is_trust_config_file(file_name):
+                findings.append(
+                    {
+                        "severity": "blocker",
+                        "title": "Policy trust config changed.",
+                        "file": file_name,
+                        "evidence": f"{file_name} changes can weaken strict verification policy for future runs.",
+                        "required_fix": "Keep policy config operator-owned. Move this change to a separately reviewed operator commit before finishing the task.",
+                    }
+                )
 
     base_context = {
         "changed_files": changed_files,

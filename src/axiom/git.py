@@ -159,7 +159,7 @@ def provision_workspace(repo_root: Path, task_id: str, slug: str) -> WorkspacePl
 def repo_changed_files(repo_root: Path) -> list[str]:
     if not is_git_repo(repo_root):
         return []
-    result = _run_git(repo_root, ["status", "--short"])
+    result = _run_git(repo_root, ["status", "--porcelain", "--untracked-files=all"])
     if result.returncode != 0:
         return []
     files: list[str] = []

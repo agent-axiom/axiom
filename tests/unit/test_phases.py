@@ -368,6 +368,52 @@ class LifecycleFlowTest(unittest.TestCase):
             [{"file": "README.md", "reason": "outside planned write scope"}],
         )
 
+    def test_review_blocks_policy_config_changes_even_when_planned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+            task_path = create_task(
+                repo_root=repo_root,
+                title="Policy config edit",
+                kind="feature",
+                now=datetime(2026, 4, 26, 12, 0, tzinfo=timezone.utc),
+            )
+            update_task(
+                task_path,
+                section_updates={
+                    "Repo Anchors": "- .axiom/policy.yaml",
+                    "Docs Impact": "No documentation changes required.",
+                },
+                metadata_updates={"docs_status": "not_needed"},
+            )
+            run_design(task_path)
+            run_plan(task_path)
+            task = load_task(task_path)
+            policy_path = Path(task.metadata.worktree, ".axiom", "policy.yaml")
+            policy_path.parent.mkdir(parents=True, exist_ok=True)
+            policy_path.write_text("verify:\n  strict_allow:\n    - python3 -m unittest\n", encoding="utf-8")
+            run_execute(task_path)
+            run_verify(
+                task_path,
+                commands=[f"{sys.executable} -c \"print('ok')\""],
+                negative_commands=[],
+                manual_smoke=[{"id": "smoke-1", "status": "passed", "notes": "ok"}],
+            )
+
+            run_review(task_path)
+            task = load_task(task_path)
+            result = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(task.metadata.status, "review.changes_requested")
+        self.assertEqual(result["outcome"], "changes_requested")
+        self.assertEqual(result["scope_mismatches"], [])
+        self.assertTrue(any(finding["title"] == "Policy trust config changed." for finding in result["findings"]))
+
     def test_review_requests_changes_when_git_task_has_diff_but_no_plan_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)

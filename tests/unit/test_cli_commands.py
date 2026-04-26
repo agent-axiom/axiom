@@ -424,3 +424,169 @@ class CommandIntegrationTest(unittest.TestCase):
         self.assertEqual(review["outcome"], "pass")
         self.assertEqual(review["summary"], "semantic pass")
         self.assertEqual(review["adapter"]["status"], "passed")
+
+    def test_cli_semantic_review_adapter_can_request_changes_then_pass_after_fix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo_root, check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "user.email", "axiom@example.test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.name", "AXIOM Test"], cwd=repo_root, check=True)
+            (repo_root / "app.py").write_text("print('base')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True, capture_output=True, text=True)
+            project_root = Path(__file__).resolve().parents[2]
+            plan_adapter = project_root / "examples" / "adapters" / "static_plan_adapter.py"
+            first_execute_adapter = repo_root / "first_execute_adapter.py"
+            fixed_execute_adapter = repo_root / "fixed_execute_adapter.py"
+            review_adapter = repo_root / "semantic_review_adapter.py"
+            first_execute_adapter.write_text(
+                "import json, pathlib, sys\n"
+                "request = json.load(sys.stdin)\n"
+                "pathlib.Path(request['workspace'], 'app.py').write_text(\"print('needs semantic fix')\\n\", encoding='utf-8')\n"
+                "json.dump({'summary': 'introduced semantic issue'}, sys.stdout)\n",
+                encoding="utf-8",
+            )
+            fixed_execute_adapter.write_text(
+                "import json, pathlib, sys\n"
+                "request = json.load(sys.stdin)\n"
+                "pathlib.Path(request['workspace'], 'app.py').write_text(\"print('semantic fix applied')\\n\", encoding='utf-8')\n"
+                "json.dump({'summary': 'fixed semantic issue'}, sys.stdout)\n",
+                encoding="utf-8",
+            )
+            review_adapter.write_text(
+                "import json, sys\n"
+                "request = json.load(sys.stdin)\n"
+                "if 'needs semantic fix' in request['diff']:\n"
+                "    json.dump({'outcome': 'changes_requested', 'summary': 'semantic issue remains', 'findings': [{'severity': 'medium', 'title': 'Semantic issue.', 'evidence': 'needs semantic fix', 'required_fix': 'apply semantic fix'}], 'next_phase': 'execute'}, sys.stdout)\n"
+                "else:\n"
+                "    json.dump({'outcome': 'pass', 'summary': 'semantic pass after fix', 'findings': [], 'next_phase': 'done'}, sys.stdout)\n",
+                encoding="utf-8",
+            )
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                self.assertEqual(main(["--repo-root", str(repo_root), "make", "Semantic review loop"]), 0)
+            task_path = Path(stdout.getvalue().strip())
+            self.assertEqual(_run_cli(["--repo-root", str(repo_root), "run", "design", str(task_path)]), 0)
+            update_task(
+                task_path,
+                section_updates={
+                    "Repo Anchors": "- app.py",
+                    "Docs Impact": "No documentation changes required.",
+                },
+                metadata_updates={"docs_status": "not_needed"},
+            )
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "plan",
+                        str(task_path),
+                        "--adapter-command",
+                        f"{sys.executable} {plan_adapter}",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "execute",
+                        str(task_path),
+                        "--adapter-command",
+                        f"{sys.executable} {first_execute_adapter}",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "verify",
+                        str(task_path),
+                        "--check",
+                        f"{sys.executable} -c \"print('ok')\"",
+                        "--manual-smoke",
+                        "smoke-1:passed:observed first behavior",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "review",
+                        str(task_path),
+                        "--adapter-command",
+                        f"{sys.executable} {review_adapter}",
+                    ]
+                ),
+                0,
+            )
+            task = load_task(task_path)
+            first_review = latest_phase_result(repo_root, task.metadata.id, "review")
+            self.assertEqual(task.metadata.status, "review.changes_requested")
+            self.assertEqual(first_review["outcome"], "changes_requested")
+
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "execute",
+                        str(task_path),
+                        "--adapter-command",
+                        f"{sys.executable} {fixed_execute_adapter}",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "verify",
+                        str(task_path),
+                        "--check",
+                        f"{sys.executable} -c \"print('ok')\"",
+                        "--manual-smoke",
+                        "smoke-1:passed:observed fixed behavior",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(
+                _run_cli(
+                    [
+                        "--repo-root",
+                        str(repo_root),
+                        "run",
+                        "review",
+                        str(task_path),
+                        "--adapter-command",
+                        f"{sys.executable} {review_adapter}",
+                    ]
+                ),
+                0,
+            )
+            self.assertEqual(_run_cli(["--repo-root", str(repo_root), "finish", str(task_path)]), 0)
+            task = load_task(task_path)
+            final_review = latest_phase_result(repo_root, task.metadata.id, "review")
+
+        self.assertEqual(task.metadata.status, "done")
+        self.assertEqual(final_review["outcome"], "pass")
+        self.assertEqual(final_review["summary"], "semantic pass after fix")

@@ -44,6 +44,7 @@ class AdapterTest(unittest.TestCase):
         static_plan = repo_root / "examples" / "adapters" / "static_plan_adapter.py"
         file_writer = repo_root / "examples" / "adapters" / "file_write_execute_adapter.py"
         openai_compatible = repo_root / "examples" / "adapters" / "openai_compatible_plan_adapter.py"
+        openai_compatible_review = repo_root / "examples" / "adapters" / "openai_compatible_review_adapter.py"
 
         request_schema = json.loads(request_schema_path.read_text(encoding="utf-8"))
 
@@ -53,6 +54,7 @@ class AdapterTest(unittest.TestCase):
         self.assertTrue(static_plan.exists())
         self.assertTrue(file_writer.exists())
         self.assertTrue(openai_compatible.exists())
+        self.assertTrue(openai_compatible_review.exists())
 
     def test_build_adapter_request_includes_task_workspace_and_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -461,3 +463,148 @@ class AdapterTest(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["summary"], "Fake server plan.")
         self.assertEqual(payload["steps"][0]["write_scope"], ["app.py"])
+
+    def test_openai_compatible_plan_adapter_retries_invalid_model_json(self) -> None:
+        class FakeOpenAIHandler(BaseHTTPRequestHandler):
+            calls = 0
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:
+                FakeOpenAIHandler.calls += 1
+                _ = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                content = "not json" if FakeOpenAIHandler.calls == 1 else json.dumps(
+                    {
+                        "summary": "Retry produced valid plan.",
+                        "steps": [
+                            {
+                                "id": "step-1",
+                                "title": "Edit app.py.",
+                                "write_scope": ["app.py"],
+                                "checks": [],
+                            }
+                        ],
+                        "manual_smoke": [{"id": "smoke-1", "instruction": "Run app.py."}],
+                        "stop_conditions": ["Stop outside app.py."],
+                    }
+                )
+                payload = json.dumps({"choices": [{"message": {"content": content}}]}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), FakeOpenAIHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            repo_root = Path(__file__).resolve().parents[2]
+            adapter = repo_root / "examples" / "adapters" / "openai_compatible_plan_adapter.py"
+            request = {
+                "task": {"title": "Fake adapter"},
+                "sections": {"Repo Anchors": "- app.py"},
+                "workspace": str(repo_root),
+            }
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AXIOM_OPENAI_COMPAT_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+                    "AXIOM_OPENAI_COMPAT_MODEL": "fake-model",
+                    "AXIOM_OPENAI_COMPAT_TIMEOUT": "2",
+                    "AXIOM_OPENAI_COMPAT_SCHEMA_RETRIES": "1",
+                    "AXIOM_OPENAI_COMPAT_RETRY_DELAY": "0",
+                }
+            )
+
+            completed = subprocess.run(
+                [sys.executable, str(adapter)],
+                input=json.dumps(request),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(FakeOpenAIHandler.calls, 2)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["summary"], "Retry produced valid plan.")
+
+    def test_openai_compatible_review_adapter_retries_invalid_model_json(self) -> None:
+        class FakeOpenAIHandler(BaseHTTPRequestHandler):
+            calls = 0
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:
+                FakeOpenAIHandler.calls += 1
+                _ = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                content = "not json" if FakeOpenAIHandler.calls == 1 else json.dumps(
+                    {
+                        "outcome": "changes_requested",
+                        "summary": "Retry produced semantic review.",
+                        "findings": [
+                            {
+                                "severity": "medium",
+                                "title": "Semantic finding.",
+                                "evidence": "fake server",
+                                "required_fix": "fix it",
+                            }
+                        ],
+                        "next_phase": "execute",
+                    }
+                )
+                payload = json.dumps({"choices": [{"message": {"content": content}}]}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), FakeOpenAIHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            repo_root = Path(__file__).resolve().parents[2]
+            adapter = repo_root / "examples" / "adapters" / "openai_compatible_review_adapter.py"
+            request = {
+                "task": {"title": "Fake adapter"},
+                "sections": {"Repo Anchors": "- app.py"},
+                "workspace": str(repo_root),
+                "latest_artifacts": {"verify": {"outcome": "passed"}},
+                "diff": "diff --git a/app.py b/app.py",
+            }
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AXIOM_OPENAI_COMPAT_BASE_URL": f"http://127.0.0.1:{server.server_port}/v1",
+                    "AXIOM_OPENAI_COMPAT_MODEL": "fake-model",
+                    "AXIOM_OPENAI_COMPAT_TIMEOUT": "2",
+                    "AXIOM_OPENAI_COMPAT_SCHEMA_RETRIES": "1",
+                    "AXIOM_OPENAI_COMPAT_RETRY_DELAY": "0",
+                }
+            )
+
+            completed = subprocess.run(
+                [sys.executable, str(adapter)],
+                input=json.dumps(request),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(FakeOpenAIHandler.calls, 2)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["outcome"], "changes_requested")
+        self.assertEqual(payload["findings"][0]["title"], "Semantic finding.")

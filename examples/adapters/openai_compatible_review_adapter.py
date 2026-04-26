@@ -29,12 +29,6 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-def _validate_plan(payload: dict[str, object]) -> None:
-    for key in ("summary", "steps", "manual_smoke", "stop_conditions"):
-        if key not in payload:
-            raise ValueError(f"plan missing required key: {key}")
-
-
 def _extract_json_object(text: str) -> dict[str, object]:
     text = text.strip()
     if text.startswith("```"):
@@ -47,9 +41,17 @@ def _extract_json_object(text: str) -> dict[str, object]:
     return payload
 
 
-def _extract_plan(text: str) -> dict[str, object]:
+def _validate_review(payload: dict[str, object]) -> None:
+    for key in ("outcome", "summary", "findings", "next_phase"):
+        if key not in payload:
+            raise ValueError(f"review missing required key: {key}")
+    if payload["outcome"] not in {"pass", "changes_requested", "blocked"}:
+        raise ValueError("review outcome must be pass, changes_requested, or blocked")
+
+
+def _extract_review(text: str) -> dict[str, object]:
     payload = _extract_json_object(text)
-    _validate_plan(payload)
+    _validate_review(payload)
     return payload
 
 
@@ -104,9 +106,12 @@ def main() -> int:
         "task": request["task"],
         "sections": request["sections"],
         "workspace": request["workspace"],
+        "latest_artifacts": request.get("latest_artifacts", {}),
+        "diff": request.get("diff", ""),
         "instruction": (
-            "Return only JSON matching AXIOM schemas/plan.schema.json. "
-            "Use concrete write_scope entries from the task repo anchors when possible."
+            "Return only JSON matching AXIOM schemas/review.schema.json. "
+            "Use outcome=pass only when the diff satisfies the task, verification evidence is credible, "
+            "and no semantic findings remain."
         ),
     }
     body = {
@@ -114,7 +119,7 @@ def main() -> int:
         "messages": [
             {
                 "role": "system",
-                "content": "You are an AXIOM planning adapter. Return valid JSON only.",
+                "content": "You are an AXIOM semantic review adapter. Return valid JSON only.",
             },
             {"role": "user", "content": json.dumps(prompt, sort_keys=True)},
         ],
@@ -136,18 +141,18 @@ def main() -> int:
                 retry_delay=retry_delay,
             )
             content = response_payload["choices"][0]["message"]["content"]
-            plan = _extract_plan(str(content))
-            json.dump(plan, sys.stdout)
+            review = _extract_review(str(content))
+            json.dump(review, sys.stdout)
             return 0
         except RuntimeError as exc:
             errors.append(f"attempt {schema_attempt}: request failed: {exc}")
             break
         except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            errors.append(f"attempt {schema_attempt}: invalid plan JSON: {exc}")
+            errors.append(f"attempt {schema_attempt}: invalid review JSON: {exc}")
         if schema_attempt <= schema_retries and retry_delay > 0:
             time.sleep(retry_delay)
 
-    print(f"OpenAI-compatible adapter failed: {'; '.join(errors)}", file=sys.stderr)
+    print(f"OpenAI-compatible review adapter failed: {'; '.join(errors)}", file=sys.stderr)
     return 1
 
 

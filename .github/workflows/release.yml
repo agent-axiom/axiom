@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and publish"
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
@@ -23,6 +32,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -58,6 +69,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -69,13 +81,14 @@ jobs:
 
       - name: Write embedded build metadata
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           BUILD_TIMESTAMP="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          RELEASE_COMMIT="$(git rev-parse HEAD)"
           python scripts/write_build_metadata.py \
             --output src/axiom/_build.py \
             --version "$VERSION" \
-            --git-commit "${GITHUB_SHA}" \
-            --git-tag "${GITHUB_REF_NAME}" \
+            --git-commit "$RELEASE_COMMIT" \
+            --git-tag "$RELEASE_TAG" \
             --build-timestamp "$BUILD_TIMESTAMP" \
             --source-repo "https://github.com/${GITHUB_REPOSITORY}"
 
@@ -103,7 +116,7 @@ jobs:
         run: >
           python scripts/sbom.py
           --package-name axiom-workflow
-          --version "${GITHUB_REF_NAME#v}"
+          --version "${RELEASE_TAG#v}"
           dist/*
           > dist/SBOM.spdx.json
 
@@ -116,11 +129,13 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >
-          gh release create "${GITHUB_REF_NAME}"
-          dist/*
-          --title "${GITHUB_REF_NAME}"
-          --generate-notes
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG"
+          else
+            gh release create "$RELEASE_TAG" dist/* --title "$RELEASE_TAG" --generate-notes
+          fi
 
       - name: Attest release artifacts
         uses: actions/attest@v4

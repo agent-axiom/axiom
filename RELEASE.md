@@ -67,7 +67,9 @@ This verifies provenance for the local artifact against the attestation generate
 
 ## Verify GitHub Release Integrity
 
-If the repository uses GitHub immutable releases, you can also verify the release and local asset through the release attestation flow described in GitHub docs:
+If the repository uses GitHub immutable releases, you can also verify the
+release and local asset through the release attestation flow described in GitHub
+docs:
 
 ```bash
 gh release verify v0.1.0 --repo agent-axiom/axiom

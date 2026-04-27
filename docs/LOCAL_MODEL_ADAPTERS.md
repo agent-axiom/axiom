@@ -1,6 +1,7 @@
 # Local Model Adapter Flow
 
-AXIOM does not embed a coding agent. It invokes explicit local command adapters that speak `axiom.adapter.v1` JSON over stdin/stdout.
+AXIOM does not embed a coding agent. It invokes explicit local command adapters
+that speak `axiom.adapter.v1` JSON over stdin/stdout.
 
 The smallest useful local-model flow is:
 

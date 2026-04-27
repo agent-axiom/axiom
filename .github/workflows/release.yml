@@ -12,8 +12,46 @@ permissions:
   artifact-metadata: write
 
 jobs:
+  release_preflight:
+    name: release preflight / py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build
+
+      - name: Check packaged schemas
+        run: make check-schemas
+
+      - name: Run unit suite
+        run: make test
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Verify installed wheel
+        run: |
+          python -m venv .venv-wheel-smoke
+          .venv-wheel-smoke/bin/python -m pip install dist/*.whl
+          python scripts/installed_wheel_smoke.py \
+            --axiom-bin .venv-wheel-smoke/bin/axiom \
+            --python-bin .venv-wheel-smoke/bin/python
+
   publish:
     runs-on: ubuntu-latest
+    needs: release_preflight
 
     steps:
       - name: Checkout

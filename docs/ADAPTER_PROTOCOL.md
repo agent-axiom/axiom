@@ -2,7 +2,10 @@
 
 AXIOM adapters are local commands that speak JSON over stdin/stdout.
 
-Adapters are trusted local commands, not sandboxes. AXIOM runs them as the current OS user in the task worktree. A plan adapter should only return JSON. An execute adapter may edit files in the task worktree. Do not point `--adapter-command` at untrusted scripts.
+Adapters are trusted local commands, not sandboxes. AXIOM runs them as the
+current OS user in the task worktree. A plan adapter should only return JSON. An
+execute adapter may edit files in the task worktree. Do not point
+`--adapter-command` at untrusted scripts.
 
 Protocol:
 
@@ -28,7 +31,11 @@ Optional local trust guardrails:
 
 Every adapter receives one JSON object on stdin matching `schemas/adapter-request.schema.json`.
 
-AXIOM uses a small stdlib schema validator, not a full JSON Schema engine. Runtime schemas are limited to AXIOM's supported subset: `$schema`, `title`, `type`, `required`, `properties`, `items`, `enum`, `const`, `$defs`, and `$ref`. Unsupported keywords are rejected so schema authors do not get a false sense of enforcement.
+AXIOM uses a small stdlib schema validator, not a full JSON Schema engine.
+Runtime schemas are limited to AXIOM's supported subset: `$schema`, `title`,
+`type`, `required`, `properties`, `items`, `enum`, `const`, `$defs`, and `$ref`.
+Unsupported keywords are rejected so schema authors do not get a false sense of
+enforcement.
 
 Important fields:
 - `protocol`: always `axiom.adapter.v1`
@@ -109,11 +116,14 @@ Example:
 }
 ```
 
-Review adapters are optional and cannot bypass deterministic gates. AXIOM checks verification outcome, docs disposition, task-scoped diff evidence, and plan write-scope mismatches before accepting any semantic adapter pass.
+Review adapters are optional and cannot bypass deterministic gates. AXIOM checks
+verification outcome, docs disposition, task-scoped diff evidence, and plan
+write-scope mismatches before accepting any semantic adapter pass.
 
 ## Failure Handling
 
-AXIOM persists failed adapter attempts as phase artifacts instead of dropping the error into transient CLI output only.
+AXIOM persists failed adapter attempts as phase artifacts instead of dropping
+the error into transient CLI output only.
 
 Persisted failure cases include:
 - adapter command blocked by policy or adapter trust guardrails
@@ -121,11 +131,15 @@ Persisted failure cases include:
 - adapter timeout
 - stdout that is not a JSON object
 
-For `plan`, a failed adapter attempt records a `plan` artifact with `outcome=blocked` and leaves the task in `plan.blocked`.
+For `plan`, a failed adapter attempt records a `plan` artifact with
+`outcome=blocked` and leaves the task in `plan.blocked`.
 
-For `execute`, a failed adapter attempt records an `execute` artifact with `outcome=failed`, the pre/post changed-file evidence AXIOM can observe, and leaves the task in `execute.failed`.
+For `execute`, a failed adapter attempt records an `execute` artifact with
+`outcome=failed`, the pre/post changed-file evidence AXIOM can observe, and
+leaves the task in `execute.failed`.
 
-For `review`, a failed adapter attempt records a `review` artifact with `outcome=blocked` and leaves the task in `review.blocked`.
+For `review`, a failed adapter attempt records a `review` artifact with
+`outcome=blocked` and leaves the task in `review.blocked`.
 
 ## Reference Adapters
 
@@ -135,7 +149,11 @@ See:
 - `examples/adapters/openai_compatible_plan_adapter.py`
 - `examples/adapters/openai_compatible_review_adapter.py`
 
-The static and file-write adapters are intentionally simple shims for local testing and closed-infra bootstrapping. The OpenAI-compatible plan and review adapters are small reference clients for local `/v1/chat/completions` servers such as an internal gateway, Ollama-compatible gateway, vLLM, or another local model server.
+The static and file-write adapters are intentionally simple shims for local
+testing and closed-infra bootstrapping. The OpenAI-compatible plan and review
+adapters are small reference clients for local `/v1/chat/completions` servers
+such as an internal gateway, Ollama-compatible gateway, vLLM, or another local
+model server.
 
 OpenAI-compatible adapter environment:
 - `AXIOM_OPENAI_COMPAT_BASE_URL`: defaults to `http://localhost:11434/v1`
@@ -144,4 +162,5 @@ OpenAI-compatible adapter environment:
 - `AXIOM_OPENAI_COMPAT_TIMEOUT`: request timeout in seconds, defaults to `120`
 - `AXIOM_OPENAI_COMPAT_RETRIES`: retry count after the first attempt, defaults to `0`
 - `AXIOM_OPENAI_COMPAT_RETRY_DELAY`: delay between retries in seconds, defaults to `0.25`
-- `AXIOM_OPENAI_COMPAT_SCHEMA_RETRIES`: retry count for invalid model JSON or missing required response keys, defaults to `1`
+- `AXIOM_OPENAI_COMPAT_SCHEMA_RETRIES`: retry count for invalid model JSON or
+  missing required response keys, defaults to `1`

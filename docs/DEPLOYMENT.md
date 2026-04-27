@@ -34,10 +34,12 @@ axiom --repo-root /repos/payments make "fix retry logic"
 
 Recommended setup:
 
-1. Make AXIOM available locally as an internal package, internal mirror, or vendored tool directory.
+1. Make AXIOM available locally as an internal package, internal mirror, or
+   vendored tool directory.
 2. Open the target project repository.
 3. Run AXIOM against that repository.
-4. Let AXIOM create `.axiom/tasks/...` and `.axiom/artifacts/...` inside the target repository.
+4. Let AXIOM create `.axiom/tasks/...` and `.axiom/artifacts/...` inside the
+   target repository.
 
 AXIOM behaves like a local toolchain component, not like a cloud service.
 
@@ -51,7 +53,8 @@ Best default for closed infrastructure.
 axiom --repo-root /repos/payments make "fix retry logic"
 ```
 
-Use this when a platform team can install AXIOM once on developer workstations, VMs, or jump hosts.
+Use this when a platform team can install AXIOM once on developer workstations,
+VMs, or jump hosts.
 
 ### Internal Mirror Or Sidecar Repo
 
@@ -61,7 +64,8 @@ Good when the environment allows internal git access but not internet access.
 /opt/axiom/bin/axiom --repo-root /repos/payments make "fix retry logic"
 ```
 
-Mirror AXIOM internally, clone it once into `/opt/axiom` or `/srv/tools/axiom`, then run the launcher against any project.
+Mirror AXIOM internally, clone it once into `/opt/axiom` or `/srv/tools/axiom`,
+then run the launcher against any project.
 
 ### Vendored Into A Project
 
@@ -80,14 +84,19 @@ git clone <internal-axiom-repo> ~/tools/axiom
 cd ~/tools/axiom
 make test
 
-TASK_PATH=$(~/tools/axiom/bin/axiom --repo-root /repos/myproject make "fix invoice rounding")
+TASK_PATH=$(~/tools/axiom/bin/axiom \
+  --repo-root /repos/myproject \
+  make "fix invoice rounding")
 TASK_ID=$(basename "$TASK_PATH" | sed -E 's/^(AX-[0-9]{8}-[0-9]{3})-.*$/\1/')
 
 ~/tools/axiom/bin/axiom --repo-root /repos/myproject list
 ~/tools/axiom/bin/axiom --repo-root /repos/myproject run design "$TASK_ID"
 ~/tools/axiom/bin/axiom --repo-root /repos/myproject run plan "$TASK_ID"
-~/tools/axiom/bin/axiom --repo-root /repos/myproject run execute "$TASK_ID" --note "Applied implementation changes"
-~/tools/axiom/bin/axiom --repo-root /repos/myproject run verify "$TASK_ID" --check "python3 -m unittest discover -s tests/unit -v" --manual-smoke "smoke-1:passed:Observed expected runtime behavior"
+~/tools/axiom/bin/axiom --repo-root /repos/myproject run execute "$TASK_ID" \
+  --note "Applied implementation changes"
+~/tools/axiom/bin/axiom --repo-root /repos/myproject run verify "$TASK_ID" \
+  --check "python3 -m unittest discover -s tests/unit -v" \
+  --manual-smoke "smoke-1:passed:Observed expected runtime behavior"
 ~/tools/axiom/bin/axiom --repo-root /repos/myproject run review "$TASK_ID"
 ~/tools/axiom/bin/axiom --repo-root /repos/myproject finish "$TASK_ID"
 ```
@@ -101,26 +110,43 @@ Result:
 ### AXIOM Already Installed
 
 ```text
-Work on repository `/repos/myproject` through AXIOM only. Use `axiom --repo-root /repos/myproject ...` for task creation and phase transitions. Create a task named `fix invoice rounding`, then drive it through `design`, `plan`, `execute`, `verify`, `review`, and `finish`. Keep all persisted state in the project's `.axiom/` directory and do not rely on chat history as the source of truth.
+Work on repository `/repos/myproject` through AXIOM only.
+Use `axiom --repo-root /repos/myproject ...` for task creation and phase transitions.
+Create a task named `fix invoice rounding`, then drive it through `design`,
+`plan`, `execute`, `verify`, `review`, and `finish`.
+Keep all persisted state in the project's `.axiom/` directory and do not rely
+on chat history as the source of truth.
 ```
 
 ### AXIOM Not Installed Yet
 
 ```text
-If AXIOM is not already present locally, clone the internal AXIOM repository into `/opt/axiom`. After that, work on repository `/repos/myproject` through `/opt/axiom/bin/axiom --repo-root /repos/myproject ...`. Create a task named `fix invoice rounding`, then drive it through `design`, `plan`, `execute`, `verify`, `review`, and `finish`. Persist workflow state in `/repos/myproject/.axiom/`.
+If AXIOM is not already present locally, clone the internal AXIOM repository
+into `/opt/axiom`.
+After that, work on repository `/repos/myproject` through
+`/opt/axiom/bin/axiom --repo-root /repos/myproject ...`.
+Create a task named `fix invoice rounding`, then drive it through `design`,
+`plan`, `execute`, `verify`, `review`, and `finish`.
+Persist workflow state in `/repos/myproject/.axiom/`.
 ```
 
 ### Vendored AXIOM Inside The Project
 
 ```text
-Use the vendored AXIOM runtime at `/repos/myproject/tools/axiom/bin/axiom`. Run all workflow actions against repository `/repos/myproject` with `--repo-root /repos/myproject`. Create a task named `fix invoice rounding`, then drive it through `design`, `plan`, `execute`, `verify`, `review`, and `finish`. Keep the task file authoritative.
+Use the vendored AXIOM runtime at `/repos/myproject/tools/axiom/bin/axiom`.
+Run all workflow actions against repository `/repos/myproject` with
+`--repo-root /repos/myproject`.
+Create a task named `fix invoice rounding`, then drive it through `design`,
+`plan`, `execute`, `verify`, `review`, and `finish`.
+Keep the task file authoritative.
 ```
 
 ## Usage Scenarios
 
 ### One Developer, One Closed Repository
 
-Clone AXIOM once into a local tools directory and run `bin/axiom --repo-root /path/to/project ...`.
+Clone AXIOM once into a local tools directory and run
+`bin/axiom --repo-root /path/to/project ...`.
 
 ### Internal Platform Team Supports Many Repositories
 
@@ -128,8 +154,10 @@ Install AXIOM once as an internal binary or package and expose `axiom` in `PATH`
 
 ### Local Coding Agent Works Across Multiple Projects
 
-Keep AXIOM installed centrally or in `/opt/axiom`, and instruct the agent to always operate through `axiom --repo-root <project>`.
+Keep AXIOM installed centrally or in `/opt/axiom`, and instruct the agent to
+always operate through `axiom --repo-root <project>`.
 
 ### Fully Air-Gapped Or Audit-Heavy Repository
 
-Vendor AXIOM into the project under `tools/axiom/`. This improves auditability but makes upgrades heavier.
+Vendor AXIOM into the project under `tools/axiom/`. This improves auditability
+but makes upgrades heavier.
